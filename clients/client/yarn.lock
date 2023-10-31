@@ -695,10 +695,10 @@ serialize-javascript@6.0.0:
   dependencies:
     randombytes "^2.1.0"
 
-slugid@^4.0.0:
-  version "4.0.0"
-  resolved "https://registry.yarnpkg.com/slugid/-/slugid-4.0.0.tgz#27c548953584b89891a35048f00e332b882542ab"
-  integrity sha512-NJ3Sd6NkVIoC8h3Tpn74Ez+SkvukgCror6jIqhSzJYMyK3nbhAmJFKKwOYu2ZulrfvRe1BJDE+CBm/N9t2dENg==
+slugid@^5.0.0:
+  version "5.0.0"
+  resolved "https://registry.yarnpkg.com/slugid/-/slugid-5.0.0.tgz#1886a4585a79c07fc1f0ee0550d1ae3c7c6583dd"
+  integrity sha512-Ht4g9fIUPGo6mN+4SI20Z/nvQfXZV0S+sHStizvlhNssCVhLhOVXP/q/gp5vy9I/P+Xm3kr5SDxHA36lU32lvQ==
   dependencies:
     uuid "^9.0.0"
 
