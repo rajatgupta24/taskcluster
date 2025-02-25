@@ -3484,21 +3484,31 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@date-io/core@npm:1.x, @date-io/core@npm:^1.3.13":
+"@date-io/core@npm:1.x":
   version: 1.3.13
   resolution: "@date-io/core@npm:1.3.13"
   checksum: 10c0/7f099234a6fff74c5510197de577c2402ba399ce45341978e59252452192988aa41e0157d29a478b293513f68a18fc1674c408fa8b6f1c6a1f26b181581df3b2
   languageName: node
   linkType: hard
 
-"@date-io/date-fns@npm:1.3.13":
-  version: 1.3.13
-  resolution: "@date-io/date-fns@npm:1.3.13"
+"@date-io/core@npm:^3.2.0":
+  version: 3.2.0
+  resolution: "@date-io/core@npm:3.2.0"
+  checksum: 10c0/e320e5eb1dc5cdafbebdb5b3a4c80fcf18cef1ccf39bd57e63de7826c966b89814c984b59f7fb1fc3f7650859fb0ba890e39b0e77bfb671f4b01991432ccc06e
+  languageName: node
+  linkType: hard
+
+"@date-io/date-fns@npm:3.2.0":
+  version: 3.2.0
+  resolution: "@date-io/date-fns@npm:3.2.0"
   dependencies:
-    "@date-io/core": "npm:^1.3.13"
+    "@date-io/core": "npm:^3.2.0"
   peerDependencies:
-    date-fns: ^2.0.0
-  checksum: 10c0/5ab31d2e007389dd22f04a474b4a90c67d2a878c1981dca5926fde96733fc51b1379dd5d5b8ba39267ccbbd2625e76dc86a5838db091b55d99853af143e4b691
+    date-fns: ^3.2.0
+  peerDependenciesMeta:
+    date-fns:
+      optional: true
+  checksum: 10c0/f618e5669ae6add13e092f0479d213e4e4a88084c06c578b7e7e47ef956acfbb2d6732bb57c778572893620579ebbbe0bd5fea90f3dbc4e987a43394a8f265e1
   languageName: node
   linkType: hard
 
@@ -17462,7 +17472,7 @@ __metadata:
     "@babel/preset-env": "npm:^7.25.4"
     "@babel/preset-react": "npm:^7.24.7"
     "@babel/register": "npm:^7.24.6"
-    "@date-io/date-fns": "npm:1.3.13"
+    "@date-io/date-fns": "npm:3.2.0"
     "@fontsource/roboto": "npm:^4.5.8"
     "@material-ui/core": "npm:^4.8.3"
     "@material-ui/icons": "npm:^4.5.1"
