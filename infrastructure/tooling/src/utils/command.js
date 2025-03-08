@@ -35,8 +35,27 @@ export const execCommand = async ({
 
   if (logfile) {
     const logStream = fs.createWriteStream(logfile);
-    cp.stdout.pipe(logStream);
-    cp.stderr.pipe(logStream);
+    cp.stdout.pipe(logStream, { end: false });
+    cp.stderr.pipe(logStream, { end: false });
+
+    let stdoutEnded = false;
+    let stderrEnded = false;
+
+    const checkToCloseStream = () => {
+      if (stdoutEnded && stderrEnded) {
+        logStream.end();
+      }
+    };
+
+    cp.stdout.on('end', () => {
+      stdoutEnded = true;
+      checkToCloseStream();
+    });
+
+    cp.stderr.on('end', () => {
+      stderrEnded = true;
+      checkToCloseStream();
+    });
   }
 
   const stream = new Transform({
@@ -49,8 +68,28 @@ export const execCommand = async ({
       callback(null, chunk);
     },
   });
-  cp.stdout.pipe(stream);
-  cp.stderr.pipe(stream);
+  cp.stdout.pipe(stream, { end: false });
+  cp.stderr.pipe(stream, { end: false });
+
+  let stdoutEnded = false;
+  let stderrEnded = false;
+
+  const checkToCloseStream = () => {
+    if (stdoutEnded && stderrEnded) {
+      stream.end();
+    }
+  };
+
+  cp.stdout.on('end', () => {
+    stdoutEnded = true;
+    checkToCloseStream();
+  });
+
+  cp.stderr.on('end', () => {
+    stderrEnded = true;
+    checkToCloseStream();
+  });
+
   if (stdin) {
     cp.stdin.write(stdin);
     cp.stdin.end();
