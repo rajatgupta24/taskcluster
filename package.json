@@ -42,7 +42,7 @@
     "amqplib": "^0.10.5",
     "body-parser": "1.20.3",
     "body-parser-graphql": "^1.0.0",
-    "chalk": "^4.0.0",
+    "chalk": "^5.4.1",
     "compression": "^1.7.5",
     "content-security-policy": "^0.3.0",
     "content-type": "^1.0.4",
