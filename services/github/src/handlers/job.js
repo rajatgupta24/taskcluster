@@ -222,6 +222,7 @@ export async function jobHandler(message) {
   let groupState = 'pending';
   let taskGroupId = 'nonexistent';
   let graphConfig;
+  let now = new Date().toJSON();
 
   // Now we can try processing the config and kicking off a task.
   try {
@@ -233,6 +234,7 @@ export async function jobHandler(message) {
         0: libUrls.schema(this.rootUrl, 'github', 'v1/taskcluster-github-config.yml'),
         1: libUrls.schema(this.rootUrl, 'github', 'v1/taskcluster-github-config.v1.yml'),
       },
+      now,
     });
     if (graphConfig.tasks !== undefined && !Array.isArray(graphConfig.tasks)) {
       throw new Error('tasks field  of .taskcluster.yml must be array of tasks or empty array');

@@ -12,7 +12,7 @@ import TcYaml from './tc-yaml.js';
 export const setup = async function({ cfg, schemaset }) {
   const validate = await schemaset.validator(cfg.taskcluster.rootUrl);
 
-  return function({ config, payload, schema }) {
+  return function({ config, payload, schema, now }) {
     const version = config.version;
 
     const errors = validate(config, schema[version]);
@@ -34,7 +34,7 @@ export const setup = async function({ cfg, schemaset }) {
     // Compile individual tasks, filtering any that are not intended
     // for the current github event type. Append taskGroupId while
     // we're at it.
-    return tcyaml.compileTasks(config, cfg, payload, new Date().toJSON());
+    const result = tcyaml.compileTasks(config, cfg, payload, now);
   };
 };
 
