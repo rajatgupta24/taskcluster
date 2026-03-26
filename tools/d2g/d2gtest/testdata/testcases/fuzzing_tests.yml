@@ -57,6 +57,8 @@ testSuite:
         - "-1"
         - --pids-limit
         - "-1"
+        - --pull=never
+        - --log-driver=none
         - --privileged
         - --security-opt=seccomp=unconfined
         - --add-host=localhost.localdomain:127.0.0.1

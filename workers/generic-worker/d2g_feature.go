@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/taskcluster/taskcluster/v98/internal/scopes"
 	"github.com/taskcluster/taskcluster/v98/workers/generic-worker/fileutil"
@@ -235,20 +236,36 @@ func (dtf *D2GTaskFeature) Start() *CommandExecutionError {
 }
 
 func (dtf *D2GTaskFeature) Stop(err *ExecutionErrors) {
+	// Copy artifacts from the stopped container in parallel since
+	// each docker cp reads from an independent path and destinations
+	// are unique (artifact0, artifact1, ...).
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var copyErrs []*CommandExecutionError
 	for _, artifact := range dtf.task.D2GInfo.CopyArtifacts {
-		cmd, e := process.NewCommandNoOutputStreams([]string{
-			"docker",
-			"cp",
-			fmt.Sprintf("%s:%s", dtf.task.D2GInfo.ContainerName, artifact.SrcPath),
-			artifact.DestPath,
-		}, taskContext.TaskDir, []string{}, dtf.task.pd)
-		if e != nil {
-			err.add(executionError(internalError, errored, fmt.Errorf("[d2g] could not create process to copy artifact: %v", e)))
-		}
-		out, e := cmd.CombinedOutput()
-		if e != nil {
-			dtf.task.Warnf("%v", formatCommandError(fmt.Sprintf("[d2g] Artifact %q not found at %q", artifact.Name, artifact.SrcPath), e, out))
-		}
+		wg.Go(func() {
+			cmd, e := process.NewCommandNoOutputStreams([]string{
+				"docker",
+				"cp",
+				fmt.Sprintf("%s:%s", dtf.task.D2GInfo.ContainerName, artifact.SrcPath),
+				artifact.DestPath,
+			}, taskContext.TaskDir, []string{}, dtf.task.pd)
+			if e != nil {
+				execErr := executionError(internalError, errored, fmt.Errorf("[d2g] could not create process to copy artifact: %v", e))
+				mu.Lock()
+				copyErrs = append(copyErrs, execErr)
+				mu.Unlock()
+				return
+			}
+			out, e := cmd.CombinedOutput()
+			if e != nil {
+				dtf.task.Warnf("%v", formatCommandError(fmt.Sprintf("[d2g] Artifact %q not found at %q", artifact.Name, artifact.SrcPath), e, out))
+			}
+		})
+	}
+	wg.Wait()
+	for _, e := range copyErrs {
+		err.add(e)
 	}
 
 	cmd, e := process.NewCommandNoOutputStreams([]string{
