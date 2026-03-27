@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/taskcluster/taskcluster/v98/internal/scopes"
 	"github.com/taskcluster/taskcluster/v98/workers/generic-worker/fileutil"
 	"github.com/taskcluster/taskcluster/v98/workers/generic-worker/process"
@@ -238,12 +240,14 @@ func (dtf *D2GTaskFeature) Start() *CommandExecutionError {
 func (dtf *D2GTaskFeature) Stop(err *ExecutionErrors) {
 	// Copy artifacts from the stopped container in parallel since
 	// each docker cp reads from an independent path and destinations
-	// are unique (artifact0, artifact1, ...).
-	var wg sync.WaitGroup
+	// are unique (artifact0, artifact1, ...). Limit to 10 concurrent
+	// copies to limit RAM usage and avoid overwhelming the Docker daemon.
+	group := &errgroup.Group{}
+	group.SetLimit(10)
 	var mu sync.Mutex
 	var copyErrs []*CommandExecutionError
 	for _, artifact := range dtf.task.D2GInfo.CopyArtifacts {
-		wg.Go(func() {
+		group.Go(func() error {
 			cmd, e := process.NewCommandNoOutputStreams([]string{
 				"docker",
 				"cp",
@@ -255,15 +259,16 @@ func (dtf *D2GTaskFeature) Stop(err *ExecutionErrors) {
 				mu.Lock()
 				copyErrs = append(copyErrs, execErr)
 				mu.Unlock()
-				return
+				return nil
 			}
 			out, e := cmd.CombinedOutput()
 			if e != nil {
 				dtf.task.Warnf("%v", formatCommandError(fmt.Sprintf("[d2g] Artifact %q not found at %q", artifact.Name, artifact.SrcPath), e, out))
 			}
+			return nil
 		})
 	}
-	wg.Wait()
+	_ = group.Wait()
 	for _, e := range copyErrs {
 		err.add(e)
 	}
