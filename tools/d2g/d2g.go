@@ -398,6 +398,18 @@ func runCommand(
 	// https://docs.docker.com/reference/cli/docker/container/run/
 	args = append(args, "--memory-swap", "-1", "--pids-limit", "-1")
 
+	// The d2g task feature always ensures that the image is
+	// available locally (via docker pull or docker load) before running
+	// the container. Skip the local image lookup since we know the
+	// image is already present.
+	args = append(args, "--pull=never")
+
+	// Generic worker captures task output directly via process
+	// stdout/stderr. Docker's log driver would write a redundant copy
+	// of all output to disk that is never read (the container is
+	// removed after the task). Disable it to save disk I/O.
+	args = append(args, "--log-driver=none")
+
 	if dwPayload.Capabilities.Privileged && config.AllowPrivileged {
 		args = append(args, "--privileged")
 	} else if dwPayload.Features.AllowPtrace && config.AllowPtrace {
