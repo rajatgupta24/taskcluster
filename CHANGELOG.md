@@ -3,6 +3,38 @@
 <!-- `yarn release` will insert the existing changelog snippets here: -->
 <!-- NEXT RELEASE HERE -->
 
+## v98.0.1
+
+### GENERAL
+
+▶ [patch]
+Upgrades to Node.js 24.14.1 [SECURITY].
+
+### DEPLOYERS
+
+▶ [patch] [#8388](https://github.com/taskcluster/taskcluster/issues/8388)
+The GitHub service now streams backing log artifacts instead of downloading them entirely into memory. Previously, tasks with very large logs (e.g. ~98MB) caused the status handler to crash with an out-of-memory error, leaving GitHub check runs stuck as `in_progress` indefinitely.
+
+### OTHER
+
+▶ Additional change not described here: [#3665](https://github.com/taskcluster/taskcluster/issues/3665).
+
+### Automated Package Updates
+
+<details>
+<summary>8 Dependabot updates</summary>
+
+* build(deps): bump node-forge from 1.3.2 to 1.4.0 (f3d131fd44)
+* build(deps): bump @apollo/server from 5.4.0 to 5.5.0 (73dd22b5d7)
+* build(deps): bump picomatch from 2.3.1 to 2.3.2 in /clients/client-test (6380afb674)
+* build(deps): bump picomatch from 2.3.1 to 2.3.2 in /clients/client-web (2cbbc205fe)
+* build(deps): bump picomatch from 2.3.1 to 2.3.2 in /ui (d01a5f2ee0)
+* build(deps): bump picomatch from 2.3.1 to 2.3.2 (59c571c71b)
+* build(deps): bump flatted from 3.2.5 to 3.4.2 in /ui (fd066ad684)
+* build(deps): bump rustls-webpki in /clients/client-rust (7df9333c32)
+
+</details>
+
 ## v98.0.0
 
 ### GENERAL
