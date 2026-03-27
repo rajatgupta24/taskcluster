@@ -1440,6 +1440,8 @@ helper.secrets.mockSuite(testing.suiteName(), [], function (mock, skipping) {
 
     const TASKGROUPID = 'AXB-sjV-SoCyibyq3P32o2';
     setup(function () {
+      sinon.stub(global, "fetch").resolves({ ok: false, body: { cancel: async () => {} } });
+      sinon.stub(utils, "extractLog").resolves('');
       sinon.stub(utils, "throttleRequest").returns({ status: 404, response: { error: { text: "Resource not found" } } });
     });
 
@@ -1604,12 +1606,12 @@ helper.secrets.mockSuite(testing.suiteName(), [], function (mock, skipping) {
       await addBuild({ state: 'pending', taskGroupId: TASKGROUPID });
       await addCheckRun({ taskGroupId: TASKGROUPID, taskId: CUSTOM_CHECKRUN_TASKID });
       sinon.restore();
+      sinon.stub(global, "fetch").resolves({ ok: true, body: { cancel: async () => {} } });
+      sinon.stub(utils, "extractLog").resolves('');
       sinon.stub(utils, "throttleRequest")
         .onFirstCall()
-        .returns({ status: 404 })
-        .onSecondCall()
         .returns({ status: 200, text: CUSTOM_CHECKRUN_TEXT })
-        .onThirdCall()
+        .onSecondCall()
         .returns({ status: 404 });
       await simulateExchangeMessage({
         taskGroupId: TASKGROUPID,
@@ -1637,13 +1639,9 @@ helper.secrets.mockSuite(testing.suiteName(), [], function (mock, skipping) {
       await addBuild({ state: 'pending', taskGroupId: TASKGROUPID });
       await addCheckRun({ taskGroupId: TASKGROUPID, taskId: CUSTOM_CHECKRUN_TASKID });
       sinon.restore();
-      sinon.stub(utils, "throttleRequest")
-        .onFirstCall()
-        .returns({ status: 200, text: LIVE_LOG_TEXT })
-        .onSecondCall()
-        .returns({ status: 404 })
-        .onThirdCall()
-        .returns({ status: 404 });
+      sinon.stub(global, "fetch").resolves({ ok: true, body: { cancel: async () => {} } });
+      sinon.stub(utils, "extractLog").resolves(LIVE_LOG_TEXT);
+      sinon.stub(utils, "throttleRequest").returns({ status: 404 });
       await simulateExchangeMessage({
         taskGroupId: TASKGROUPID,
         exchange: 'exchange/taskcluster-queue/v1/task-completed',
@@ -1670,13 +1668,9 @@ helper.secrets.mockSuite(testing.suiteName(), [], function (mock, skipping) {
       await addBuild({ state: 'pending', taskGroupId: TASKGROUPID });
       await addCheckRun({ taskGroupId: TASKGROUPID, taskId: CUSTOM_LIVELOG_NAME_TASKID });
       sinon.restore();
-      sinon.stub(utils, "throttleRequest")
-        .onFirstCall()
-        .returns({ status: 200, text: LIVE_LOG_TEXT })
-        .onSecondCall()
-        .returns({ status: 404 })
-        .onThirdCall()
-        .returns({ status: 404 });
+      sinon.stub(global, "fetch").resolves({ ok: true, body: { cancel: async () => {} } });
+      sinon.stub(utils, "extractLog").resolves(LIVE_LOG_TEXT);
+      sinon.stub(utils, "throttleRequest").returns({ status: 404 });
       await simulateExchangeMessage({
         taskGroupId: TASKGROUPID,
         exchange: 'exchange/taskcluster-queue/v1/task-completed',
@@ -1709,13 +1703,9 @@ helper.secrets.mockSuite(testing.suiteName(), [], function (mock, skipping) {
       await addBuild({ state: 'pending', taskGroupId: TASKGROUPID });
       await addCheckRun({ taskGroupId: TASKGROUPID, taskId: CUSTOM_LIVELOG_NAME_TASKID });
       sinon.restore();
-      sinon.stub(utils, "throttleRequest")
-        .onFirstCall()
-        .returns({ status: 200, text: LIVE_LOG_TEXT })
-        .onSecondCall()
-        .returns({ status: 404 })
-        .onThirdCall()
-        .returns({ status: 404 });
+      sinon.stub(global, "fetch").resolves({ ok: true, body: { cancel: async () => {} } });
+      sinon.stub(utils, "extractLog").resolves(LIVE_LOG_TEXT);
+      sinon.stub(utils, "throttleRequest").returns({ status: 404 });
       await simulateExchangeMessage({
         taskGroupId: TASKGROUPID,
         exchange: 'exchange/taskcluster-queue/v1/task-completed',
@@ -1744,6 +1734,8 @@ helper.secrets.mockSuite(testing.suiteName(), [], function (mock, skipping) {
       await addBuild({ state: 'pending', taskGroupId: TASKGROUPID });
       await addCheckRun({ taskGroupId: TASKGROUPID, taskId: CUSTOM_CHECKRUN_TASKID });
       sinon.restore();
+      sinon.stub(global, "fetch").resolves({ ok: true, body: { cancel: async () => {} } });
+      sinon.stub(utils, "extractLog").resolves('');
       sinon.stub(utils, "throttleRequest")
         .onFirstCall()
         .returns({ status: 418, response: { error: { text: "I'm a tea pot" } } })
@@ -1767,12 +1759,12 @@ helper.secrets.mockSuite(testing.suiteName(), [], function (mock, skipping) {
       await addBuild({ state: 'pending', taskGroupId: TASKGROUPID });
       await addCheckRun({ taskGroupId: TASKGROUPID, taskId: CUSTOM_CHECKRUN_TASKID });
       sinon.restore();
+      sinon.stub(global, "fetch").resolves({ ok: true, body: { cancel: async () => {} } });
+      sinon.stub(utils, "extractLog").resolves(LIVE_LOG_TEXT);
       sinon.stub(utils, "throttleRequest")
         .onFirstCall()
-        .returns({ status: 200, text: LIVE_LOG_TEXT })
-        .onSecondCall()
         .returns({ status: 404 })
-        .onThirdCall()
+        .onSecondCall()
         .returns({ status: 200, text: CUSTOM_CHECKRUN_ANNOTATIONS });
       await simulateExchangeMessage({
         taskGroupId: TASKGROUPID,
@@ -1793,12 +1785,12 @@ helper.secrets.mockSuite(testing.suiteName(), [], function (mock, skipping) {
       await addBuild({ state: 'pending', taskGroupId: TASKGROUPID });
       await addCheckRun({ taskGroupId: TASKGROUPID, taskId: CUSTOM_CHECKRUN_TASKID });
       sinon.restore();
+      sinon.stub(global, "fetch").resolves({ ok: true, body: { cancel: async () => {} } });
+      sinon.stub(utils, "extractLog").resolves('');
       sinon.stub(utils, "throttleRequest")
         .onFirstCall()
         .returns({ status: 404 })
         .onSecondCall()
-        .returns({ status: 404 })
-        .onThirdCall()
         .returns({ status: 200, text: "{{{invalid json!!" });
 
       await simulateExchangeMessage({
@@ -1822,6 +1814,8 @@ helper.secrets.mockSuite(testing.suiteName(), [], function (mock, skipping) {
       await addBuild({ state: 'pending', taskGroupId: TASKGROUPID });
       await addCheckRun({ taskGroupId: TASKGROUPID, taskId: CUSTOM_CHECKRUN_TASKID });
       sinon.restore();
+      sinon.stub(global, "fetch").resolves({ ok: true, body: { cancel: async () => {} } });
+      sinon.stub(utils, "extractLog").resolves('');
       sinon.stub(utils, "throttleRequest")
         .onFirstCall()
         .returns({ status: 404 })
@@ -1857,13 +1851,9 @@ helper.secrets.mockSuite(testing.suiteName(), [], function (mock, skipping) {
       await addBuild({ state: 'pending', taskGroupId: TASKGROUPID });
       await addCheckRun({ taskGroupId: TASKGROUPID, taskId: CUSTOM_LIVELOG_NAME_TASKID });
       sinon.restore();
-      sinon.stub(utils, "throttleRequest")
-        .onFirstCall()
-        .returns({ status: 200, text: LIVE_LOG_TEXT })
-        .onSecondCall()
-        .returns({ status: 404 })
-        .onThirdCall()
-        .returns({ status: 404 });
+      sinon.stub(global, "fetch").resolves({ ok: true, body: { cancel: async () => {} } });
+      sinon.stub(utils, "extractLog").resolves(LIVE_LOG_TEXT);
+      sinon.stub(utils, "throttleRequest").returns({ status: 404 });
       await simulateExchangeMessage({
         taskGroupId: TASKGROUPID,
         exchange: 'exchange/taskcluster-queue/v1/task-completed',
@@ -1895,6 +1885,8 @@ helper.secrets.mockSuite(testing.suiteName(), [], function (mock, skipping) {
     });
 
     setup(function () {
+      sinon.stub(global, "fetch").resolves({ ok: false, body: { cancel: async () => {} } });
+      sinon.stub(utils, "extractLog").resolves('');
       sinon.stub(utils, "throttleRequest").returns({ status: 404, response: { error: { text: "Resource not found" } } });
     });
 
