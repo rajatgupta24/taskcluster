@@ -3,7 +3,7 @@ package main
 import (
 	"syscall"
 
-	"github.com/taskcluster/taskcluster/v98/workers/generic-worker/process"
+	"github.com/taskcluster/taskcluster/v99/workers/generic-worker/process"
 )
 
 func (r *RunTaskAsCurrentUserTask) resetPlatformData() {

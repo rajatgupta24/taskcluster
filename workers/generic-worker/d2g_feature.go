@@ -13,9 +13,9 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/taskcluster/taskcluster/v98/internal/scopes"
-	"github.com/taskcluster/taskcluster/v98/workers/generic-worker/fileutil"
-	"github.com/taskcluster/taskcluster/v98/workers/generic-worker/process"
+	"github.com/taskcluster/taskcluster/v99/internal/scopes"
+	"github.com/taskcluster/taskcluster/v99/workers/generic-worker/fileutil"
+	"github.com/taskcluster/taskcluster/v99/workers/generic-worker/process"
 )
 
 type (

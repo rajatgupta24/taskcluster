@@ -3,6 +3,34 @@
 <!-- `yarn release` will insert the existing changelog snippets here: -->
 <!-- NEXT RELEASE HERE -->
 
+## v99.0.0
+
+### WORKER-DEPLOYERS
+
+▶ [patch]
+D2G: limits concurrent `docker cp` artifact extractions to 10 to reduce RAM usage and avoid overwhelming the Docker daemon.
+
+▶ [patch]
+D2G: performance improvements to `docker run` for d2g tasks. Adds `--pull=never` to skip redundant registry checks (image is already loaded), `--log-driver=none` to eliminate duplicate log writes, and parallelizes artifact extraction from stopped containers.
+
+### USERS
+
+▶ [MAJOR]
+The `taskcluster/websocktunnel` Docker image tags now include a `v` prefix (e.g., `v99.0.0` instead of `99.0.0`), matching the convention used by all other Taskcluster Docker images. A duplicate task definition in the release tooling was silently overriding the correct tag format since v36.0.0. If you reference websocktunnel images by tag, update your configurations to use the `v`-prefixed format.
+
+### Automated Package Updates
+
+<details>
+<summary>5 Dependabot updates</summary>
+
+* build(deps): bump pygments from 2.19.2 to 2.20.0 in /clients/client-py (a418693297)
+* build(deps): bump github.com/go-git/go-git/v5 from 5.16.5 to 5.17.1 (df949f6f14)
+* build(deps): bump brace-expansion from 1.1.12 to 1.1.13 (480b0afbef)
+* build(deps): bump brace-expansion from 1.1.12 to 1.1.13 in /ui (95ebf2e576)
+* build(deps): bump brace-expansion in /clients/client-web (3632239116)
+
+</details>
+
 ## v98.0.1
 
 ### GENERAL
