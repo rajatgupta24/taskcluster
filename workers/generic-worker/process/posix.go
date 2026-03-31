@@ -58,7 +58,7 @@ func (c *Command) SetEnv(envVar, value string) {
 
 func (c *Command) Kill() (killOutput string, err error) {
 	// abort even if process hasn't started
-	close(c.abort)
+	c.abortOnce.Do(func() { close(c.abort) })
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	// if pid has been set in result, use that
