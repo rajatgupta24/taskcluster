@@ -1601,21 +1601,32 @@ export class AzureProvider extends Provider {
 
       if (worker.state === states.REQUESTED) {
         // It's possible for a newly-requested VM to be running (PowerState/running), but have failed
-        // provisioning.  In this case the VM isn't doing any work, but billing continues.  So, we want
-        // to catch this case and also consider it failed.  These state codes have the form
-        // `ProvisioningState/failed/<SomeCode>`.  We allow the user to ignore specific codes.
+        // provisioning.  These state codes have the form `ProvisioningState/failed/<SomeCode>`.
+        // We allow the user to ignore specific codes via ignoreFailedProvisioningStates.
         let ignore = new Set(worker.providerData.ignoreFailedProvisioningStates || []);
         let failedProvisioningCodes = powerStates
           .filter(state => state.startsWith('ProvisioningState/failed/'))
           .map(state => state.split('/')[2])
           .filter(code => !ignore.has(code));
 
-        // any failed-provisioning code is treated as a failure
         if (failedProvisioningCodes.length > 0) {
-          return {
-            instanceState: InstanceStates.FAILED,
-            instanceStateReason: `failed provisioning power state; powerStates=${powerStates.join(', ')}`,
-          };
+          const isRunning = powerStates.includes('PowerState/running');
+          if (isRunning) {
+            // VM is running despite provisioning error — let it attempt
+            // registration. terminateAfter will catch truly broken workers.
+            monitor.warning({
+              message: 'VM has failed provisioning state but is running',
+              workerPoolId: worker.workerPoolId,
+              workerId: worker.workerId,
+              powerStates,
+              failedProvisioningCodes,
+            });
+          } else {
+            return {
+              instanceState: InstanceStates.FAILED,
+              instanceStateReason: `failed provisioning power state; powerStates=${powerStates.join(', ')}`,
+            };
+          }
         }
       }
 
