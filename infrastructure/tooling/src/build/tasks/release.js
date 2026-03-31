@@ -5,7 +5,6 @@ import path from 'path';
 
 import {
   ensureTask,
-  npmPublish,
   cargoPublish,
   execCommand,
   pyClientRelease,
@@ -63,6 +62,8 @@ export default ({ tasks, cmdOptions, credentials, baseDir, logsDir }) => {
       'taskcluster-proxy-docker-image',
       'generic-worker-image',
       'livelog-artifacts',
+      'npm-client-artifact',
+      'npm-client-web-artifact',
     ],
     provides: [
       'github-release',
@@ -88,6 +89,8 @@ export default ({ tasks, cmdOptions, credentials, baseDir, logsDir }) => {
         .concat(requirements['worker-runner-artifacts'])
         .concat(requirements['livelog-artifacts'])
         .concat(requirements['taskcluster-proxy-artifacts'])
+        .concat([requirements['npm-client-artifact']])
+        .concat([requirements['npm-client-web-artifact']])
         .map(name => ({ name, contentType: 'application/octet-stream' }));
       for (let { name, contentType } of files) {
         utils.status({ message: `Upload Release asset ${name}` });
@@ -126,53 +129,77 @@ export default ({ tasks, cmdOptions, credentials, baseDir, logsDir }) => {
   });
 
   ensureTask(tasks, {
-    title: `Publish clients/client to npm`,
+    title: `Pack clients/client for npm`,
     requires: [
-      'github-release', // to make sure the release finishes first..
+      'clean-artifacts-dir',
+      'release-version',
     ],
     provides: [
-      `publish-clients/client`,
+      'npm-client-artifact',
     ],
     run: async (requirements, utils) => {
-      if (cmdOptions.staging || !cmdOptions.push) {
-        return utils.skip();
-      }
+      const artifactsDir = requirements['clean-artifacts-dir'];
+      const version = requirements['release-version'];
+      const dir = path.join(REPO_ROOT, 'clients/client');
 
-      await npmPublish({
-        dir: path.join(REPO_ROOT, 'clients/client'),
-        apiToken: credentials.npmToken,
-        logfile: path.join(logsDir, `publish-clients-client.log`),
-        utils });
+      await execCommand({
+        dir,
+        command: ['npm', 'pack'],
+        utils,
+        logfile: path.join(logsDir, 'pack-clients-client.log'),
+      });
+
+      // npm pack produces taskcluster-client-<version>.tgz in the working directory
+      const tarball = `taskcluster-client-${version}.tgz`;
+      fs.copyFileSync(
+        path.join(dir, tarball),
+        path.join(artifactsDir, tarball),
+      );
+
+      return {
+        'npm-client-artifact': tarball,
+      };
     },
   });
 
   ensureTask(tasks, {
-    title: `Publish clients/client-web to npm`,
+    title: `Pack clients/client-web for npm`,
     requires: [
-      'github-release', // to make sure the release finishes first..
+      'clean-artifacts-dir',
+      'release-version',
     ],
     provides: [
-      `publish-clients/client-web`,
+      'npm-client-web-artifact',
     ],
     run: async (requirements, utils) => {
+      const artifactsDir = requirements['clean-artifacts-dir'];
+      const version = requirements['release-version'];
       const dir = path.join(REPO_ROOT, 'clients/client-web');
 
       await execCommand({
         dir,
         command: ['yarn', 'install'],
         utils,
-        logfile: path.join(logsDir, `install-clients-client-web.log`),
+        logfile: path.join(logsDir, 'install-clients-client-web.log'),
       });
 
-      if (cmdOptions.staging || !cmdOptions.push) {
-        return;
-      }
-
-      await npmPublish({
+      await execCommand({
         dir,
-        apiToken: credentials.npmToken,
-        logfile: path.join(logsDir, `publish-clients-client-web.log`),
-        utils });
+        command: ['npm', 'pack'],
+        utils,
+        logfile: path.join(logsDir, 'pack-clients-client-web.log'),
+      });
+
+      // npm pack produces taskcluster-client-web-<version>.tgz in the working directory
+      const tarball = `taskcluster-client-web-${version}.tgz`;
+      fs.copyFileSync(
+        path.join(dir, tarball),
+        path.join(artifactsDir, tarball),
+      );
+
+      return {
+        'npm-client-web-artifact': tarball,
+      };
     },
   });
 
@@ -226,8 +253,6 @@ export default ({ tasks, cmdOptions, credentials, baseDir, logsDir }) => {
       'release-version',
       'monoimage-docker-image',
       'github-release',
-      'publish-clients/client',
-      'publish-clients/client-web',
       'publish-clients/client-py',
       'publish-clients/client-rust',
     ],
