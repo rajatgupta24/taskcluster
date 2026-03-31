@@ -86,3 +86,4 @@ docker-compose.override.yml
 
 dist/
 .DS_Store
+.worktrees/
