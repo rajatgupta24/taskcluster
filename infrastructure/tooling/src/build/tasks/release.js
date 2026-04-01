@@ -132,25 +132,24 @@ export default ({ tasks, cmdOptions, credentials, baseDir, logsDir }) => {
     title: `Pack clients/client for npm`,
     requires: [
       'clean-artifacts-dir',
-      'release-version',
     ],
     provides: [
       'npm-client-artifact',
     ],
     run: async (requirements, utils) => {
       const artifactsDir = requirements['clean-artifacts-dir'];
-      const version = requirements['release-version'];
       const dir = path.join(REPO_ROOT, 'clients/client');
 
-      await execCommand({
+      const output = await execCommand({
         dir,
         command: ['npm', 'pack'],
         utils,
+        keepAllOutput: true,
         logfile: path.join(logsDir, 'pack-clients-client.log'),
       });
 
-      // npm pack produces taskcluster-client-<version>.tgz in the working directory
-      const tarball = `taskcluster-client-${version}.tgz`;
+      // npm pack prints the tarball filename on the last line of stdout
+      const tarball = output.trim().split('\n').pop();
       fs.copyFileSync(
         path.join(dir, tarball),
         path.join(artifactsDir, tarball),
@@ -166,14 +165,12 @@ export default ({ tasks, cmdOptions, credentials, baseDir, logsDir }) => {
     title: `Pack clients/client-web for npm`,
     requires: [
       'clean-artifacts-dir',
-      'release-version',
     ],
     provides: [
       'npm-client-web-artifact',
     ],
     run: async (requirements, utils) => {
       const artifactsDir = requirements['clean-artifacts-dir'];
-      const version = requirements['release-version'];
       const dir = path.join(REPO_ROOT, 'clients/client-web');
 
       await execCommand({
@@ -183,15 +180,16 @@ export default ({ tasks, cmdOptions, credentials, baseDir, logsDir }) => {
         logfile: path.join(logsDir, 'install-clients-client-web.log'),
       });
 
-      await execCommand({
+      const output = await execCommand({
         dir,
         command: ['npm', 'pack'],
         utils,
+        keepAllOutput: true,
         logfile: path.join(logsDir, 'pack-clients-client-web.log'),
       });
 
-      // npm pack produces taskcluster-client-web-<version>.tgz in the working directory
-      const tarball = `taskcluster-client-web-${version}.tgz`;
+      // npm pack prints the tarball filename on the last line of stdout
+      const tarball = output.trim().split('\n').pop();
       fs.copyFileSync(
         path.join(dir, tarball),
         path.join(artifactsDir, tarball),
