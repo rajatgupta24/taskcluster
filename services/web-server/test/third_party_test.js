@@ -419,6 +419,82 @@ helper.secrets.mockSuite(testing.suiteName(), [], function(mock, skipping) {
       await helper.expectMonitorError('InputError');
     });
   });
+  suite('scope tampering defense', function() {
+    test('implicit flow: tampered scope in decision is rejected', async function() {
+      const agent = await helper.signedInAgent();
+      const registeredClientId = 'test-token';
+      const state = 'abc123';
+
+      // user sent to /login/oauth/authorize with query args
+
+      let res = await agent.get(url('/login/oauth/authorize' +
+        '?response_type=token' +
+        `&client_id=${registeredClientId}` +
+        '&redirect_uri=' + encodeURIComponent('https://test.example.com/cb') +
+        '&scope=tags:get:*' +
+        `&state=${state}` +
+        '&expires=3+days'))
+        .redirects(0)
+        .ok(res => res.status === 302);
+
+      let query = getQuery(res.header.location);
+
+      // Tamper with the scope in the decision POST — request broader scopes
+      // than the registered client allows
+      const expiry = moment(new Date()).startOf('day').add(3, 'days').format('YYYY/MM/DD');
+
+      res = await agent.post(url('/login/oauth/authorize/decision'))
+        .send(`clientId=${query.get('clientId')}`)
+        .send(`transaction_id=${query.get('transactionID')}`)
+        .send(`scope=assume:* queue:* auth:*`)
+        .send(`description='test'`)
+        .send(`expires=${expiry}`)
+        .redirects(0)
+        .ok(res => res.status === 302);
+
+      query = getQuery(res.header.location, '#');
+
+      assert.equal(query.get('error'), 'invalid_scope');
+      assert.equal(query.get('state'), state);
+    });
+    test('authorization code flow: tampered scope in decision is rejected', async function() {
+      const agent = await helper.signedInAgent();
+      const registeredClientId = 'test-code';
+      const redirectUri = 'https://test.example.com/cb';
+      const state = 'abc123';
+
+      // user sent to /login/oauth/authorize with query args
+
+      let res = await agent.get(url('/login/oauth/authorize' +
+        '?response_type=code' +
+        `&client_id=${registeredClientId}` +
+        '&redirect_uri=' + encodeURIComponent(redirectUri) +
+        '&scope=tags:get:*' +
+        `&state=${state}` +
+        '&expires=3+days'))
+        .redirects(0)
+        .ok(res => res.status === 302);
+
+      let query = getQuery(res.header.location);
+
+      // Tamper with the scope in the decision POST
+      const expiry = moment(new Date()).startOf('day').add(3, 'days').format('YYYY/MM/DD');
+
+      res = await agent.post(url('/login/oauth/authorize/decision'))
+        .send(`clientId=${query.get('clientId')}`)
+        .send(`transaction_id=${query.get('transactionID')}`)
+        .send(`scope=assume:* queue:* auth:*`)
+        .send(`description='test'`)
+        .send(`expires=${expiry}`)
+        .redirects(0)
+        .ok(res => res.status === 302);
+
+      query = getQuery(res.header.location);
+
+      assert.equal(query.get('error'), 'invalid_scope');
+      assert.equal(query.get('state'), state);
+    });
+  });
   suite('integration', function() {
     test('implicit flow', async function() {
       const agent = await helper.signedInAgent();
