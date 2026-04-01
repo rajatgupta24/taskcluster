@@ -1684,6 +1684,32 @@ helper.secrets.mockSuite(testing.suiteName(), [], function(mock, skipping) {
       assert(!provider.provisionResources.called);
     });
 
+    test('does not call removeWorker() for a requested worker with failed provisioning but PowerState/running', async function() {
+      await setState({ state: 'requested', powerStates: ['ProvisioningState/failed/OSProvisioningClientError', 'PowerState/running'] });
+      await provider.checkWorker({ worker });
+      await worker.reload(helper.db);
+      assert(!provider.removeWorker.called);
+      assert(provider.provisionResources.called);
+    });
+
+    test('calls removeWorker() for a requested worker with failed provisioning and no PowerState/running', async function() {
+      await setState({ state: 'requested', powerStates: ['ProvisioningState/failed/OSProvisioningClientError', 'PowerState/stopped'] });
+      await provider.checkWorker({ worker });
+      await worker.reload(helper.db);
+      assert(provider.removeWorker.called);
+      assert(!provider.provisionResources.called);
+    });
+
+    test('removes worker with failed provisioning + PowerState/running after terminateAfter expires', async function() {
+      await setState({ state: 'requested', powerStates: ['ProvisioningState/failed/OSProvisioningClientError', 'PowerState/running'] });
+      await worker.update(helper.db, worker => {
+        worker.providerData.terminateAfter = Date.now() - 1000;
+      });
+      await provider.checkWorker({ worker });
+      assert(provider.removeWorker.called);
+      assert(!provider.provisionResources.called);
+    });
+
     test('calls provisionResources for a requested worker that is present but has failed OS Provisioning, if ignoring that', async function() {
       await worker.update(helper.db, worker => {
         worker.providerData.ignoreFailedProvisioningStates = ['OSProvisioningTimedOut', 'SomethingElse'];
