@@ -150,10 +150,9 @@ export default ({ tasks, cmdOptions, credentials, baseDir, logsDir }) => {
 
       // npm pack prints the tarball filename on the last line of stdout
       const tarball = output.trim().split('\n').pop();
-      fs.copyFileSync(
-        path.join(dir, tarball),
-        path.join(artifactsDir, tarball),
-      );
+      const tarballPath = path.join(dir, tarball);
+      fs.copyFileSync(tarballPath, path.join(artifactsDir, tarball));
+      fs.unlinkSync(tarballPath);
 
       return {
         'npm-client-artifact': tarball,
@@ -190,10 +189,9 @@ export default ({ tasks, cmdOptions, credentials, baseDir, logsDir }) => {
 
       // npm pack prints the tarball filename on the last line of stdout
       const tarball = output.trim().split('\n').pop();
-      fs.copyFileSync(
-        path.join(dir, tarball),
-        path.join(artifactsDir, tarball),
-      );
+      const tarballPath = path.join(dir, tarball);
+      fs.copyFileSync(tarballPath, path.join(artifactsDir, tarball));
+      fs.unlinkSync(tarballPath);
 
       return {
         'npm-client-web-artifact': tarball,
