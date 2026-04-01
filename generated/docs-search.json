@@ -3816,13 +3816,6 @@
   },
   {
     "element": "h2",
-    "id": "build-from-source",
-    "path": "/reference/workers/generic-worker/installing",
-    "subtitle": "Build from source",
-    "title": "Installing Generic-Worker"
-  },
-  {
-    "element": "h2",
     "id": "create-a-test-job",
     "path": "/reference/workers/generic-worker/installing",
     "subtitle": "Create a test job",
@@ -3850,13 +3843,6 @@
     "title": "Installing Generic-Worker"
   },
   {
-    "element": "h2",
-    "id": "obtain-prebuilt-release",
-    "path": "/reference/workers/generic-worker/installing",
-    "subtitle": "Obtain prebuilt release",
-    "title": "Installing Generic-Worker"
-  },
-  {
     "element": "h3",
     "id": "option-1",
     "path": "/reference/workers/generic-worker/installing",
@@ -3864,10 +3850,24 @@
     "title": "Installing Generic-Worker"
   },
   {
+    "element": "h2",
+    "id": "option-1-obtain-prebuilt-release",
+    "path": "/reference/workers/generic-worker/installing",
+    "subtitle": "Option 1: Obtain prebuilt release",
+    "title": "Installing Generic-Worker"
+  },
+  {
     "element": "h3",
     "id": "option-2",
     "path": "/reference/workers/generic-worker/installing",
     "subtitle": "Option 2",
+    "title": "Installing Generic-Worker"
+  },
+  {
+    "element": "h2",
+    "id": "option-2-build-from-source",
+    "path": "/reference/workers/generic-worker/installing",
+    "subtitle": "Option 2: Build from source",
     "title": "Installing Generic-Worker"
   },
   {
