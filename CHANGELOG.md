@@ -3,6 +3,14 @@
 <!-- `yarn release` will insert the existing changelog snippets here: -->
 <!-- NEXT RELEASE HERE -->
 
+## v99.0.2
+
+
+
+### OTHER
+
+▶ Additional change not described here: [#8013](https://github.com/taskcluster/taskcluster/issues/8013).
+
 ## v99.0.1
 
 ### DEPLOYERS
