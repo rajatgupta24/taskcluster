@@ -196,6 +196,12 @@ export default ({ tasks, cmdOptions, credentials }) => {
         contents.replace(/download\/v[0-9.]*\/taskcluster-/g, `download/v${requirements['release-version']}/taskcluster-`));
       changed.push(shellreadme);
 
+      const installingMdx = 'ui/docs/reference/workers/generic-worker/installing.mdx';
+      utils.status({ message: `Update ${installingMdx}` });
+      await modifyRepoFile(installingMdx, contents =>
+        contents.replace(/download\/v[0-9.]+\//g, `download/v${requirements['release-version']}/`));
+      changed.push(installingMdx);
+
       const internalVersion = 'internal/version.go';
       utils.status({ message: `Update ${internalVersion}` });
       await modifyRepoFile(internalVersion, contents =>
