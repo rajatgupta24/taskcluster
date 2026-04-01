@@ -220,6 +220,7 @@ export default ({ tasks, cmdOptions, credentials }) => {
         // Provide explicit list of allowed file extensions so that
         // workers/generic-worker/testdata/*.zip files are not modified.
         'workers/generic-worker/**.go',
+        'workers/generic-worker/**.md',
         'workers/generic-worker/**.yml',
         'workers/generic-worker/**.sh',
         'workers/generic-worker/**.cmd',
