@@ -3,6 +3,25 @@
 <!-- `yarn release` will insert the existing changelog snippets here: -->
 <!-- NEXT RELEASE HERE -->
 
+## v99.0.1
+
+### DEPLOYERS
+
+▶ [patch] [#6898](https://github.com/taskcluster/taskcluster/issues/6898)
+Azure workers that report a failed provisioning state (e.g., `OSProvisioningClientError`) but are actually running (`PowerState/running`) are no longer immediately terminated. Instead, they are allowed to attempt registration, with the existing `terminateAfter` timeout serving as a safety net for truly broken workers.
+
+▶ [patch]
+Web Server: OAuth2 token scopes are now intersected with the registered client's allowed scopes in addition to the user's scopes, preventing a tampered consent form submission from requesting scopes beyond what the client was registered for. A warning is logged when a scope mismatch is detected.
+
+### WORKER-DEPLOYERS
+
+▶ [patch] [#8410](https://github.com/taskcluster/taskcluster/issues/8410)
+Generic Worker: Fix panic "close of closed channel" in `Command.Kill()` when multiple abort paths (e.g., reclaim failure and graceful termination) race to kill a task's processes.
+
+### OTHER
+
+▶ Additional changes not described here: [#8013](https://github.com/taskcluster/taskcluster/issues/8013), [#8013](https://github.com/taskcluster/taskcluster/issues/8013), [#8013](https://github.com/taskcluster/taskcluster/issues/8013).
+
 ## v99.0.0
 
 ### WORKER-DEPLOYERS
