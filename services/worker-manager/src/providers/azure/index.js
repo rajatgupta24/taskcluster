@@ -626,8 +626,14 @@ export class AzureProvider extends Provider {
           operations,
         });
 
-        if ([Worker.states.REQUESTED, Worker.states.RUNNING].includes(worker.state)) {
+        if (worker.state === Worker.states.REQUESTED) {
           await this.removeWorker({ worker, reason: `deployment ${provisioningState}: ${errorMessage}` });
+        } else if (worker.state === Worker.states.RUNNING) {
+          monitor.warning({
+            message: 'ARM deployment failed but worker is already running; skipping removal',
+            provisioningState,
+            errorMessage,
+          });
         }
         return true;
       }
@@ -660,6 +666,12 @@ export class AzureProvider extends Provider {
         throw err;
       }
 
+      monitor.debug({
+        message: 'deployment not found (404), checking operation status',
+        hasOperation: !!worker.providerData.deployment.operation,
+        workerState: worker.state,
+      });
+
       // Deployment is likely still in progress - check status or operation might be expired or failed
       if (worker.providerData.deployment.operation) {
         let op = await this.handleOperation({
@@ -673,14 +685,22 @@ export class AzureProvider extends Provider {
             worker.providerData.deployment.operation = undefined;
             worker.providerData.provisioningComplete = true;
           });
-          if ([Worker.states.REQUESTED, Worker.states.RUNNING].includes(worker.state)) {
+          if (worker.state === Worker.states.REQUESTED) {
             await this.removeWorker({ worker, reason: 'deployment operation expired' });
+          } else if (worker.state === Worker.states.RUNNING) {
+            monitor.warning({
+              message: 'deployment operation expired but worker is already running; skipping removal',
+            });
           }
           return true;
         }
       } else {
         // No operation to track - deployment never existed or validation failed early
         // Mark as complete so STOPPING workers can proceed with cleanup
+        monitor.info({
+          message: 'deployment not found and no operation to track; marking provisioning complete',
+          workerState: worker.state,
+        });
         await worker.update(this.db, worker => {
           worker.providerData.provisioningComplete = true;
         });

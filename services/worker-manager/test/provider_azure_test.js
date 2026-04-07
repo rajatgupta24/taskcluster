@@ -849,6 +849,147 @@ helper.secrets.mockSuite(testing.suiteName(), [], function(mock, skipping) {
       }
     });
 
+    test('deployment operation expired does not remove RUNNING worker', async function() {
+      await provisionWorkerPool({
+        armDeployment: {
+          mode: 'Incremental',
+          templateLink: {
+            id: '/subscriptions/test/resourceGroups/test/providers/Microsoft.Resources/templateSpecs/test/versions/1.0.0',
+          },
+          parameters: {
+            location: { value: 'east' },
+          },
+        },
+      });
+
+      let [worker] = await helper.getWorkers();
+      const deploymentName = worker.providerData.deployment.name;
+      const resourceGroupName = worker.providerData.resourceGroupName;
+
+      // Transition worker to RUNNING (simulating successful registration)
+      await worker.update(helper.db, w => {
+        w.state = 'running';
+      });
+
+      // Delete the deployment from the fake to simulate Azure cleaning it up (404 on get)
+      await fake.deploymentsClient.deployments.beginDelete(resourceGroupName, deploymentName);
+      // Also clear the operation request so handleOperation returns false (operation expired)
+      fake.deploymentsClient._requests.delete(`${resourceGroupName}/${deploymentName}`);
+
+      await provider.scanPrepare();
+
+      const sandbox = sinon.createSandbox({});
+      const removeSpy = sandbox.spy(provider, 'removeWorker');
+      sandbox.stub(provider, 'queryInstance').resolves({
+        instanceState: 'ok',
+        instanceStateReason: 'ProvisioningState/succeeded',
+      });
+      sandbox.stub(provider, 'provisionResources').resolves();
+
+      try {
+        await provider.checkWorker({ worker });
+        await worker.reload(helper.db);
+
+        assert.equal(removeSpy.callCount, 0, 'removeWorker should not be called for RUNNING worker');
+        assert.equal(worker.state, 'running', 'worker should remain running');
+        assert.equal(worker.providerData.provisioningComplete, true,
+          'provisioningComplete should be set even without removal');
+      } finally {
+        sandbox.restore();
+      }
+    });
+
+    test('deployment operation expired removes REQUESTED worker', async function() {
+      await provisionWorkerPool({
+        armDeployment: {
+          mode: 'Incremental',
+          templateLink: {
+            id: '/subscriptions/test/resourceGroups/test/providers/Microsoft.Resources/templateSpecs/test/versions/1.0.0',
+          },
+          parameters: {
+            location: { value: 'east' },
+          },
+        },
+      });
+
+      let [worker] = await helper.getWorkers();
+      const deploymentName = worker.providerData.deployment.name;
+      const resourceGroupName = worker.providerData.resourceGroupName;
+
+      // Worker stays in REQUESTED state (never registered)
+
+      // Delete the deployment and clear the operation to simulate expiry
+      await fake.deploymentsClient.deployments.beginDelete(resourceGroupName, deploymentName);
+      fake.deploymentsClient._requests.delete(`${resourceGroupName}/${deploymentName}`);
+
+      await provider.scanPrepare();
+
+      const sandbox = sinon.createSandbox({});
+      const removeSpy = sandbox.spy(provider, 'removeWorker');
+
+      try {
+        await provider.checkWorker({ worker });
+        await worker.reload(helper.db);
+
+        assert.equal(removeSpy.callCount, 1, 'removeWorker should be called for REQUESTED worker');
+        assert.equal(worker.state, 'stopping', 'REQUESTED worker should transition to stopping');
+      } finally {
+        sandbox.restore();
+      }
+    });
+
+    test('failed ARM deployment does not remove RUNNING worker', async function() {
+      await provisionWorkerPool({
+        armDeployment: {
+          mode: 'Incremental',
+          templateLink: {
+            id: '/subscriptions/test/resourceGroups/test/providers/Microsoft.Resources/templateSpecs/test/versions/1.0.0',
+          },
+          parameters: {
+            location: { value: 'east' },
+          },
+        },
+      });
+
+      let [worker] = await helper.getWorkers();
+      const deploymentName = worker.providerData.deployment.name;
+      const resourceGroupName = worker.providerData.resourceGroupName;
+
+      // Transition worker to RUNNING
+      await worker.update(helper.db, w => {
+        w.state = 'running';
+      });
+
+      // Set deployment to Failed state
+      fake.deploymentsClient.deployments.setFakeDeploymentState(
+        resourceGroupName, deploymentName, 'Failed', 'some extension failed');
+
+      fake.deploymentsClient.deploymentOperations.setFakeDeploymentOperations(
+        resourceGroupName, deploymentName, []);
+
+      await provider.scanPrepare();
+
+      const sandbox = sinon.createSandbox({});
+      const removeSpy = sandbox.spy(provider, 'removeWorker');
+      sandbox.stub(provider, 'queryInstance').resolves({
+        instanceState: 'ok',
+        instanceStateReason: 'ProvisioningState/succeeded',
+      });
+      sandbox.stub(provider, 'provisionResources').resolves();
+
+      try {
+        await provider.checkWorker({ worker });
+        await worker.reload(helper.db);
+
+        assert.equal(removeSpy.callCount, 0, 'removeWorker should not be called for RUNNING worker');
+        assert.equal(worker.state, 'running', 'worker should remain running');
+        assert.equal(worker.providerData.provisioningComplete, true,
+          'provisioningComplete should still be set');
+      } finally {
+        sandbox.restore();
+      }
+    });
+
     test('checkWorker continues after completed ARM deployment', async function() {
       await provisionWorkerPool({
         armDeployment: {
