@@ -21,12 +21,16 @@ on:
     - cron: '18 19 * * 1'
 
 permissions:
-  contents: read
+  contents: read # Required: checkout repository
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   analyze:
     permissions:
-      security-events: write
+      security-events: write # Required: upload SARIF results
     name: Analyze
     runs-on: ubuntu-latest
 
