@@ -28,7 +28,7 @@ Worker) tasks to the `taskGroupId` of the current task.
 
 `TASKCLUSTER_ROOT_URL` is the [root URL](/docs/manual/using/root-urls) for the current Taskcluster deployment.
 It is typically set during task execution by worker implementations.  The value
-is used by [client libraries](/docs/manual/using/integration/libraries) by
+is used by [client libraries](/docs/manual/using/api#client-libraries) by
 calling functions like `fromEnvVars` or `optionsFromEnvironment`.
 
 The root URL serves as a scope for `TASKCLUSTER_CLIENT_ID`, etc. which only
@@ -38,7 +38,7 @@ have meaning in a single deployment.
 
 `TASKCLUSTER_CLIENT_ID` is the clientId to use for Taskcluster API calls.
 
-This is read by [client libraries](/docs/manual/using/integration/libraries)
+This is read by [client libraries](/docs/manual/using/api#client-libraries)
 using functions like `fromEnvVars` or `optionsFromEnvironment`. The
 `taskcluster-cli` command `taskcluster signin` sets this and related variables
 in a shell environment.
