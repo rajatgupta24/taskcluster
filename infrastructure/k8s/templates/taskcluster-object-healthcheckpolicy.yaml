@@ -1,0 +1,22 @@
+{{- if not (has "healthcheckpolicy" .Values.skipResourceTypes) -}}
+apiVersion: networking.gke.io/v1
+kind: HealthCheckPolicy
+metadata:
+  name: taskcluster-object-hc
+  labels:
+    app.kubernetes.io/name: taskcluster-object-hc
+    app.kubernetes.io/instance: '{{ .Release.Name }}'
+    app.kubernetes.io/component: taskcluster-object-hc-healthcheckpolicy
+    app.kubernetes.io/part-of: taskcluster
+spec:
+  default:
+    config:
+      type: HTTP
+      httpHealthCheck:
+        requestPath: /api/object/v1/ping
+        port: 8080
+  targetRef:
+    group: ''
+    kind: Service
+    name: taskcluster-object
+{{- end }}
