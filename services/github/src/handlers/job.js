@@ -301,8 +301,8 @@ export async function jobHandler(message) {
     assert.equal(build.organization, organization);
     assert.equal(build.repository, repository);
     assert.equal(build.sha, sha);
-    assert.equal(build.eventType, message.payload.details['event.type']);
-    assert.equal(build.eventId, message.payload.eventId);
+    assert.equal(build.event_type, message.payload.details['event.type']);
+    assert.equal(build.event_id, message.payload.eventId);
   }
 
   try {
