@@ -10448,12 +10448,12 @@ __metadata:
   languageName: node
   linkType: hard
 
-"json-e@npm:^4.8.0":
-  version: 4.8.0
-  resolution: "json-e@npm:4.8.0"
+"json-e@npm:^4.8.2":
+  version: 4.8.2
+  resolution: "json-e@npm:4.8.2"
   dependencies:
     json-stable-stringify-without-jsonify: "npm:^1.0.1"
-  checksum: 10c0/650e686c5a6e05cbe73239780c8ee87e085cfe48f0d2167da47ce116975f22b297f76c55d385cd347e895ea68d895e1e8b6ce1558937e98882098e16af1a89e9
+  checksum: 10c0/ecbd655cb800c4e5907548014807ee11a6074fc10b645fd477ce821110dd2d038339f7b192605b8855edf82fb66057c30b1859a87453b1a0112e39c3401fc2a1
   languageName: node
   linkType: hard
 
@@ -14474,7 +14474,7 @@ __metadata:
     is-uuid: "npm:^1.0.2"
     iterall: "npm:^1.2.2"
     js-yaml: "npm:^4.1.1"
-    json-e: "npm:^4.8.0"
+    json-e: "npm:^4.8.2"
     json-parameterization: "npm:^2.0.1"
     json-stable-stringify: "npm:^1.3.0"
     jsonwebtoken: "npm:^9.0.0"
