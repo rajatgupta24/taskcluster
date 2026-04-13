@@ -16,7 +16,7 @@ import {
 } from 'apollo-cache-inmemory';
 import { CachePersistor } from 'apollo-cache-persist';
 import ReactGA from 'react-ga';
-import { init as initSentry } from '@sentry/browser';
+import { init as initSentry, getDefaultIntegrations } from '@sentry/browser';
 import { MuiThemeProvider } from '@material-ui/core/styles';
 import CssBaseline from '@material-ui/core/CssBaseline';
 import Main from './Main';
@@ -177,7 +177,11 @@ export default class App extends Component {
       // Data Source Name (DSN), a configuration required by the Sentry SDK
       initSentry({
         dsn: window.env.SENTRY_DSN,
-        autoSessionTracking: false,
+        // autoSessionTracking was removed in Sentry v8+; disable
+        // session tracking by filtering out the browserSessionIntegration.
+        integrations: getDefaultIntegrations({}).filter(
+          i => i.name !== 'BrowserSession'
+        ),
       });
     }
 
