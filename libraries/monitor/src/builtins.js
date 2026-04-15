@@ -185,3 +185,16 @@ MonitorManager.registerMetric('httpRequestDurationSeconds', {
   },
   buckets: [0.01, 0.05, 0.1, 0.5, 1, 5, 10],
 });
+
+MonitorManager.registerMetric('iterateDuration', {
+  name: 'iterate_duration_seconds',
+  type: 'histogram',
+  title: 'Background iteration duration',
+  description: 'Duration of a single background iteration loop',
+  labels: {
+    name: 'Name of the iterate loop',
+    status: 'Result: success or exception',
+  },
+  buckets: [1, 5, 10, 30, 60, 120, 300, 600, 1200, 1800, 3600, 6000],
+  global: true,
+});
