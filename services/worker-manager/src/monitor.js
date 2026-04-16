@@ -283,6 +283,28 @@ MonitorManager.register({
   },
 });
 
+MonitorManager.register({
+  name: 'azureThrottled',
+  title: 'Azure API Throttled (429)',
+  type: 'azure-throttled',
+  version: 1,
+  level: 'warning',
+  description: `
+    Azure ARM API returned HTTP 429 (Too Many Requests).
+    Includes rate-limit headers from the throttled response for diagnosing
+    which subscription limits are being hit.
+  `,
+  fields: {
+    providerId: 'Provider ID',
+    operationType: 'HTTP operation category: read, write, or delete',
+    retryAfterSeconds: 'Retry-After header value in seconds, or null if absent',
+    remainingReads: 'x-ms-ratelimit-remaining-subscription-reads value, or null',
+    remainingWrites: 'x-ms-ratelimit-remaining-subscription-writes value, or null',
+    remainingDeletes: 'x-ms-ratelimit-remaining-subscription-deletes value, or null',
+    remainingResource: 'x-ms-ratelimit-remaining-resource raw value, or null',
+  },
+});
+
 const commonLabels = {
   workerPoolId: 'The worker pool ID',
   providerId: 'ID of the provider',
@@ -491,4 +513,28 @@ MonitorManager.registerMetric('workersToTerminate', {
     reason: 'Reason for termination (over_capacity, launch_config_archived)',
   },
   registers: ['scan'],
+});
+
+MonitorManager.registerMetric('azureThrottleCount', {
+  name: 'worker_manager_azure_throttle_total',
+  type: 'counter',
+  title: 'Azure API throttle events',
+  description: 'Count of HTTP 429 responses from Azure ARM API',
+  labels: {
+    providerId: 'ID of the provider',
+    operationType: 'HTTP operation category: read, write, or delete',
+  },
+  registers: ['provision', 'scan'],
+});
+
+MonitorManager.registerMetric('azureRateLimitRemaining', {
+  name: 'worker_manager_azure_ratelimit_remaining',
+  type: 'gauge',
+  title: 'Azure rate limit remaining quota',
+  description: 'Most recently observed value of Azure x-ms-ratelimit-remaining-subscription-* headers',
+  labels: {
+    providerId: 'ID of the provider',
+    limitType: 'Rate limit category: reads, writes, or deletes',
+  },
+  registers: ['provision', 'scan'],
 });

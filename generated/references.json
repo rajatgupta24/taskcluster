@@ -18050,6 +18050,34 @@
           "type": "gauge"
         },
         {
+          "description": "Most recently observed value of Azure x-ms-ratelimit-remaining-subscription-* headers",
+          "labels": {
+            "limitType": "Rate limit category: reads, writes, or deletes",
+            "providerId": "ID of the provider"
+          },
+          "name": "worker_manager_azure_ratelimit_remaining",
+          "registers": [
+            "provision",
+            "scan"
+          ],
+          "title": "Azure rate limit remaining quota",
+          "type": "gauge"
+        },
+        {
+          "description": "Count of HTTP 429 responses from Azure ARM API",
+          "labels": {
+            "operationType": "HTTP operation category: read, write, or delete",
+            "providerId": "ID of the provider"
+          },
+          "name": "worker_manager_azure_throttle_total",
+          "registers": [
+            "provision",
+            "scan"
+          ],
+          "title": "Azure API throttle events",
+          "type": "counter"
+        },
+        {
           "description": "This number represents the number of claimed tasks.",
           "labels": {
             "providerId": "ID of the provider",
@@ -18423,6 +18451,23 @@
           "name": "azureResourceGroupEnsured",
           "title": "Azure Resource Group Create or Update Information",
           "type": "azure-resource-group-ensure",
+          "version": 1
+        },
+        {
+          "description": "Azure ARM API returned HTTP 429 (Too Many Requests).\nIncludes rate-limit headers from the throttled response for diagnosing\nwhich subscription limits are being hit.",
+          "fields": {
+            "operationType": "HTTP operation category: read, write, or delete",
+            "providerId": "Provider ID",
+            "remainingDeletes": "x-ms-ratelimit-remaining-subscription-deletes value, or null",
+            "remainingReads": "x-ms-ratelimit-remaining-subscription-reads value, or null",
+            "remainingResource": "x-ms-ratelimit-remaining-resource raw value, or null",
+            "remainingWrites": "x-ms-ratelimit-remaining-subscription-writes value, or null",
+            "retryAfterSeconds": "Retry-After header value in seconds, or null if absent"
+          },
+          "level": "warning",
+          "name": "azureThrottled",
+          "title": "Azure API Throttled (429)",
+          "type": "azure-throttled",
           "version": 1
         },
         {
