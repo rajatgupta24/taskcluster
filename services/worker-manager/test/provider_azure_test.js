@@ -3,7 +3,7 @@ import taskcluster from '@taskcluster/client';
 import sinon from 'sinon';
 import assert from 'assert';
 import helper from './helper.js';
-import { FakeAzure } from './fakes/index.js';
+import { FakeAzure, FakeHttpHeaders } from './fakes/index.js';
 import { AzureProvider } from '../src/providers/azure/index.js';
 import { dnToString, getAuthorityAccessInfo, getCertFingerprint, cloneCaStore } from '../src/providers/azure/utils.js';
 import testing from '@taskcluster/lib-testing';
@@ -2589,6 +2589,691 @@ helper.secrets.mockSuite(testing.suiteName(), [], function(mock, skipping) {
         });
       });
     }
+  });
+
+  suite('FakeRestClient throttle / header support', function() {
+    let worker;
+    setup(async function() {
+      await makeWorkerPool();
+      worker = Worker.fromApi({
+        workerPoolId,
+        workerGroup: 'westus',
+        workerId: 'throttle-test',
+        providerId,
+        created: taskcluster.fromNow('0 seconds'),
+        lastModified: taskcluster.fromNow('0 seconds'),
+        lastChecked: taskcluster.fromNow('0 seconds'),
+        expires: taskcluster.fromNow('90 seconds'),
+        capacity: 1,
+        state: 'requested',
+        providerData: {
+          ...baseProviderData,
+          vm: { name: 'throttle-vm', operation: 'op/vm/rgrp/throttle-vm' },
+        },
+      });
+      await worker.create(helper.db);
+    });
+
+    test('setThrottle causes 429 error through CloudAPI.enqueue', async function() {
+      // Configure the fake to throw 429 on the next request.
+      // Use a small retry-after (1s) so the dynamic backoff doesn't
+      // cause the test to time out — this test verifies the error path,
+      // not the backoff duration.
+      fake.restClient.setThrottle(1, {
+        'retry-after': '1',
+        'x-ms-ratelimit-remaining-subscription-reads': '0',
+      });
+
+      // The provider's handleOperation path uses _enqueue('opRead', ...)
+      // which goes through CloudAPI.enqueue. The 429 triggers the error
+      // handler which retries. After the throttle count is exhausted (1),
+      // the next attempt succeeds normally (returns 404 since there's no
+      // real operation — but that's fine, we're testing the error path).
+      const errors = [];
+      const result = await provider.handleOperation({
+        op: 'op/vm/rgrp/throttle-vm',
+        errors,
+        monitor: provider.monitor,
+        worker,
+      });
+
+      // handleOperation returns false for 404 (operation not found)
+      assert.equal(result, false);
+
+      // Verify that CloudAPI logged the pause from the 429
+      const pauseMsg = monitor.manager.messages.find(
+        msg => msg.Type === 'cloud-api-paused' && msg.Fields.reason === 'rateLimit',
+      );
+      assert.ok(pauseMsg, 'expected a cloud-api-paused log for rateLimit');
+      assert.equal(pauseMsg.Fields.queueName, 'opRead');
+    });
+
+    test('setThrottle error carries statusCode and response headers', async function() {
+      fake.restClient.setThrottle(1, {
+        'retry-after': '45',
+        'x-ms-ratelimit-remaining-subscription-reads': '10',
+        'x-ms-ratelimit-remaining-subscription-writes': '200',
+      });
+
+      // Call sendLongRunningRequest directly to inspect the thrown error
+      try {
+        await fake.restClient.sendLongRunningRequest({ url: 'op/vm/rgrp/throttle-vm' });
+        assert.fail('should have thrown');
+      } catch (err) {
+        assert.equal(err.statusCode, 429);
+        assert.equal(err.message, 'Too Many Requests');
+        assert.ok(err.response, 'error should have a response property');
+        assert.ok(err.response.headers instanceof FakeHttpHeaders);
+        assert.equal(err.response.headers.get('retry-after'), '45');
+        assert.equal(err.response.headers.get('x-ms-ratelimit-remaining-subscription-reads'), '10');
+        assert.equal(err.response.headers.get('x-ms-ratelimit-remaining-subscription-writes'), '200');
+      }
+    });
+
+    test('successful response includes rate-limit headers when setResponseHeaders is used', async function() {
+      fake.restClient.setResponseHeaders({
+        'x-ms-ratelimit-remaining-subscription-reads': '150',
+        'x-ms-ratelimit-remaining-subscription-writes': '450',
+        'x-ms-ratelimit-remaining-subscription-deletes': '300',
+      });
+
+      const resp = await fake.restClient.sendLongRunningRequest({ url: 'op/vm/rgrp/throttle-vm' });
+      // Even a 404 response carries the headers
+      assert.equal(resp.status, 404);
+      assert.ok(resp.headers instanceof FakeHttpHeaders);
+      assert.equal(resp.headers.get('x-ms-ratelimit-remaining-subscription-reads'), '150');
+      assert.equal(resp.headers.get('x-ms-ratelimit-remaining-subscription-writes'), '450');
+      assert.equal(resp.headers.get('x-ms-ratelimit-remaining-subscription-deletes'), '300');
+    });
+
+    test('successful 200 response includes rate-limit headers', async function() {
+      // Set up a pending operation so the fake returns 200
+      await fake.computeClient.virtualMachines.beginCreateOrUpdate('rgrp', 'throttle-vm', {
+        subnetId: 'some/subnet',
+        location: 'westus',
+        hardwareProfile: { vmSize: 'Basic_A2' },
+        storageProfile: { osDisk: {}, dataDisks: [] },
+        osProfile: { adminUsername: 'user', adminPassword: 'pass', computerName: 'throttle-vm', customData: 'dGVzdA==' },
+        networkProfile: { networkInterfaces: [{ id: 'nic-id', primary: true }] },
+        tags: {},
+      });
+
+      fake.restClient.setResponseHeaders({
+        'x-ms-ratelimit-remaining-subscription-reads': '99',
+      });
+
+      const resp = await fake.restClient.sendLongRunningRequest({ url: 'op/vm/rgrp/throttle-vm' });
+      assert.equal(resp.status, 200);
+      assert.ok(resp.headers instanceof FakeHttpHeaders);
+      assert.equal(resp.headers.get('x-ms-ratelimit-remaining-subscription-reads'), '99');
+      assert.equal(resp.parsedBody.status, 'InProgress');
+    });
+
+    test('response has null headers when setResponseHeaders is not used', async function() {
+      const resp = await fake.restClient.sendLongRunningRequest({ url: 'op/vm/rgrp/throttle-vm' });
+      assert.equal(resp.status, 404);
+      assert.strictEqual(resp.headers, null);
+    });
+
+    test('throttle counter decrements and subsequent requests succeed', async function() {
+      fake.restClient.setThrottle(2, { 'retry-after': '10' });
+
+      // First two calls throw 429
+      for (let i = 0; i < 2; i++) {
+        try {
+          await fake.restClient.sendLongRunningRequest({ url: 'op/vm/rgrp/throttle-vm' });
+          assert.fail('should have thrown');
+        } catch (err) {
+          assert.equal(err.statusCode, 429);
+        }
+      }
+
+      // Third call succeeds (no more throttle)
+      const resp = await fake.restClient.sendLongRunningRequest({ url: 'op/vm/rgrp/throttle-vm' });
+      assert.equal(resp.status, 404); // no matching request, but no throw
+    });
+
+    test('FakeHttpHeaders.get is case-insensitive', function() {
+      const headers = new FakeHttpHeaders({
+        'X-Ms-RateLimit-Remaining-Subscription-Reads': '42',
+        'Retry-After': '30',
+      });
+      assert.equal(headers.get('x-ms-ratelimit-remaining-subscription-reads'), '42');
+      assert.equal(headers.get('X-MS-RATELIMIT-REMAINING-SUBSCRIPTION-READS'), '42');
+      assert.equal(headers.get('retry-after'), '30');
+      assert.equal(headers.get('Retry-After'), '30');
+      assert.equal(headers.get('nonexistent'), undefined);
+    });
+  });
+
+  suite('_recordRateLimitHeaders', function() {
+    test('emits azureThrottled log on 429 with all headers', function() {
+      const headers = new FakeHttpHeaders({
+        'x-ms-ratelimit-remaining-subscription-reads': '100',
+        'x-ms-ratelimit-remaining-subscription-writes': '200',
+        'x-ms-ratelimit-remaining-subscription-deletes': '50',
+        'x-ms-ratelimit-remaining-resource': 'Microsoft.Compute/GetOperation3Min;99',
+        'retry-after': '30',
+      });
+
+      provider._recordRateLimitHeaders({
+        headers,
+        statusCode: 429,
+        operationType: 'read',
+      });
+
+      const throttleMsg = monitor.manager.messages.find(
+        msg => msg.Type === 'azure-throttled',
+      );
+      assert.ok(throttleMsg, 'expected an azure-throttled log');
+      assert.equal(throttleMsg.Fields.providerId, providerId);
+      assert.equal(throttleMsg.Fields.operationType, 'read');
+      assert.equal(throttleMsg.Fields.retryAfterSeconds, 30);
+      assert.equal(throttleMsg.Fields.remainingReads, 100);
+      assert.equal(throttleMsg.Fields.remainingWrites, 200);
+      assert.equal(throttleMsg.Fields.remainingDeletes, 50);
+      assert.equal(throttleMsg.Fields.remainingResource, 'Microsoft.Compute/GetOperation3Min;99');
+    });
+
+    test('does not emit azureThrottled log on non-429 response', function() {
+      const headers = new FakeHttpHeaders({
+        'x-ms-ratelimit-remaining-subscription-reads': '500',
+      });
+
+      provider._recordRateLimitHeaders({
+        headers,
+        statusCode: 200,
+        operationType: 'read',
+      });
+
+      const throttleMsg = monitor.manager.messages.find(
+        msg => msg.Type === 'azure-throttled',
+      );
+      assert.ok(!throttleMsg, 'should not emit azure-throttled for 200 response');
+    });
+
+    test('handles partial headers gracefully', function() {
+      const headers = new FakeHttpHeaders({
+        'x-ms-ratelimit-remaining-subscription-reads': '42',
+      });
+
+      provider._recordRateLimitHeaders({
+        headers,
+        statusCode: 429,
+        operationType: 'write',
+      });
+
+      const throttleMsg = monitor.manager.messages.find(
+        msg => msg.Type === 'azure-throttled',
+      );
+      assert.ok(throttleMsg, 'expected an azure-throttled log');
+      assert.equal(throttleMsg.Fields.remainingReads, 42);
+      assert.equal(throttleMsg.Fields.remainingWrites, null);
+      assert.equal(throttleMsg.Fields.remainingDeletes, null);
+      assert.equal(throttleMsg.Fields.remainingResource, null);
+      assert.equal(throttleMsg.Fields.retryAfterSeconds, null);
+    });
+
+    test('handles malformed header values', function() {
+      const headers = new FakeHttpHeaders({
+        'x-ms-ratelimit-remaining-subscription-reads': 'not-a-number',
+        'x-ms-ratelimit-remaining-subscription-writes': '',
+        'x-ms-ratelimit-remaining-subscription-deletes': '-5',
+        'retry-after': 'abc',
+      });
+
+      // Should not throw
+      provider._recordRateLimitHeaders({
+        headers,
+        statusCode: 429,
+        operationType: 'read',
+      });
+
+      const throttleMsg = monitor.manager.messages.find(
+        msg => msg.Type === 'azure-throttled',
+      );
+      assert.ok(throttleMsg, 'expected an azure-throttled log even with malformed headers');
+      assert.equal(throttleMsg.Fields.remainingReads, null);
+      assert.equal(throttleMsg.Fields.remainingWrites, null);
+      // -5 is parsed as -5, then clamped to 0 by Math.max(n, 0)
+      assert.equal(throttleMsg.Fields.remainingDeletes, 0);
+      assert.equal(throttleMsg.Fields.retryAfterSeconds, null);
+    });
+
+    test('is a no-op when headers is null', function() {
+      // Should not throw
+      provider._recordRateLimitHeaders({
+        headers: null,
+        statusCode: 429,
+        operationType: 'read',
+      });
+
+      const throttleMsg = monitor.manager.messages.find(
+        msg => msg.Type === 'azure-throttled',
+      );
+      assert.ok(!throttleMsg, 'should not emit log with null headers');
+    });
+
+    test('is a no-op when headers lacks .get() method', function() {
+      provider._recordRateLimitHeaders({
+        headers: { 'retry-after': '30' },
+        statusCode: 429,
+        operationType: 'read',
+      });
+
+      const throttleMsg = monitor.manager.messages.find(
+        msg => msg.Type === 'azure-throttled',
+      );
+      assert.ok(!throttleMsg, 'should not emit log without .get() method');
+    });
+
+    test('calls gauge metrics for remaining-* headers', function() {
+      const recorded = [];
+      const origMetric = provider.monitor._metric.azureRateLimitRemaining;
+      provider.monitor._metric.azureRateLimitRemaining = (value, labels) => {
+        recorded.push({ value, labels });
+      };
+
+      try {
+        const headers = new FakeHttpHeaders({
+          'x-ms-ratelimit-remaining-subscription-reads': '150',
+          'x-ms-ratelimit-remaining-subscription-writes': '400',
+        });
+
+        provider._recordRateLimitHeaders({
+          headers,
+          statusCode: 200,
+          operationType: 'read',
+        });
+
+        assert.equal(recorded.length, 2);
+        assert.deepEqual(recorded[0], { value: 150, labels: { providerId, limitType: 'reads' } });
+        assert.deepEqual(recorded[1], { value: 400, labels: { providerId, limitType: 'writes' } });
+      } finally {
+        provider.monitor._metric.azureRateLimitRemaining = origMetric;
+      }
+    });
+
+    test('calls counter metric on 429', function() {
+      const recorded = [];
+      const origMetric = provider.monitor._metric.azureThrottleCount;
+      provider.monitor._metric.azureThrottleCount = (value, labels) => {
+        recorded.push({ value, labels });
+      };
+
+      try {
+        const headers = new FakeHttpHeaders({
+          'retry-after': '10',
+        });
+
+        provider._recordRateLimitHeaders({
+          headers,
+          statusCode: 429,
+          operationType: 'delete',
+        });
+
+        assert.equal(recorded.length, 1);
+        assert.deepEqual(recorded[0], { value: 1, labels: { providerId, operationType: 'delete' } });
+      } finally {
+        provider.monitor._metric.azureThrottleCount = origMetric;
+      }
+    });
+  });
+
+  suite('handleOperation observability', function() {
+    let worker;
+    setup(async function() {
+      await makeWorkerPool();
+      worker = Worker.fromApi({
+        workerPoolId,
+        workerGroup: 'westus',
+        workerId: 'obs-test',
+        providerId,
+        created: taskcluster.fromNow('0 seconds'),
+        lastModified: taskcluster.fromNow('0 seconds'),
+        lastChecked: taskcluster.fromNow('0 seconds'),
+        expires: taskcluster.fromNow('90 seconds'),
+        capacity: 1,
+        state: 'requested',
+        providerData: {
+          ...baseProviderData,
+          vm: { name: 'obs-vm', operation: 'op/vm/rgrp/obs-vm' },
+        },
+      });
+      await worker.create(helper.db);
+    });
+
+    test('records rate-limit headers from successful handleOperation response', async function() {
+      // Set up a pending operation so the fake returns 200 with parsedBody
+      await fake.computeClient.virtualMachines.beginCreateOrUpdate('rgrp', 'obs-vm', {
+        subnetId: 'some/subnet',
+        location: 'westus',
+        hardwareProfile: { vmSize: 'Basic_A2' },
+        storageProfile: { osDisk: {}, dataDisks: [] },
+        osProfile: { adminUsername: 'user', adminPassword: 'pass', computerName: 'obs-vm', customData: 'dGVzdA==' },
+        networkProfile: { networkInterfaces: [{ id: 'nic-id', primary: true }] },
+        tags: {},
+      });
+
+      fake.restClient.setResponseHeaders({
+        'x-ms-ratelimit-remaining-subscription-reads': '250',
+        'x-ms-ratelimit-remaining-subscription-writes': '800',
+      });
+
+      const gaugeRecords = [];
+      const origMetric = provider.monitor._metric.azureRateLimitRemaining;
+      provider.monitor._metric.azureRateLimitRemaining = (value, labels) => {
+        gaugeRecords.push({ value, labels });
+      };
+
+      try {
+        const errors = [];
+        await provider.handleOperation({
+          op: 'op/vm/rgrp/obs-vm',
+          errors,
+          monitor: provider.monitor,
+          worker,
+        });
+
+        // Verify gauge was called with header values
+        const readsGauge = gaugeRecords.find(r => r.labels.limitType === 'reads');
+        assert.ok(readsGauge, 'expected reads gauge to be set');
+        assert.equal(readsGauge.value, 250);
+
+        const writesGauge = gaugeRecords.find(r => r.labels.limitType === 'writes');
+        assert.ok(writesGauge, 'expected writes gauge to be set');
+        assert.equal(writesGauge.value, 800);
+
+        // Non-429 should not produce azureThrottled log
+        const throttleMsg = monitor.manager.messages.find(
+          msg => msg.Type === 'azure-throttled',
+        );
+        assert.ok(!throttleMsg, 'should not emit azure-throttled for 200 response');
+      } finally {
+        provider.monitor._metric.azureRateLimitRemaining = origMetric;
+      }
+    });
+
+    test('emits azureThrottled log and counter when handleOperation encounters 429', async function() {
+      // Use a small retry-after (1s) to keep the test fast —
+      // the dynamic backoff actually pauses the CloudAPI queue
+      fake.restClient.setThrottle(1, {
+        'retry-after': '1',
+        'x-ms-ratelimit-remaining-subscription-reads': '0',
+        'x-ms-ratelimit-remaining-resource': 'Microsoft.Compute/LowPriority;0',
+      });
+
+      const counterRecords = [];
+      const origCounter = provider.monitor._metric.azureThrottleCount;
+      provider.monitor._metric.azureThrottleCount = (value, labels) => {
+        counterRecords.push({ value, labels });
+      };
+
+      try {
+        const errors = [];
+        await provider.handleOperation({
+          op: 'op/vm/rgrp/obs-vm',
+          errors,
+          monitor: provider.monitor,
+          worker,
+        });
+
+        // The 429 goes through the errorHandler which calls _recordRateLimitHeaders
+        const throttleMsg = monitor.manager.messages.find(
+          msg => msg.Type === 'azure-throttled',
+        );
+        assert.ok(throttleMsg, 'expected an azure-throttled log from the error handler path');
+        assert.equal(throttleMsg.Fields.providerId, providerId);
+        assert.equal(throttleMsg.Fields.operationType, 'read');
+        assert.equal(throttleMsg.Fields.retryAfterSeconds, 1);
+        assert.equal(throttleMsg.Fields.remainingReads, 0);
+        assert.equal(throttleMsg.Fields.remainingResource, 'Microsoft.Compute/LowPriority;0');
+
+        // Counter should have been incremented
+        assert.ok(counterRecords.length > 0, 'expected azureThrottleCount to be incremented');
+        assert.equal(counterRecords[0].labels.operationType, 'read');
+      } finally {
+        provider.monitor._metric.azureThrottleCount = origCounter;
+      }
+    });
+  });
+
+  suite('errorHandler dynamic backoff', function() {
+    // Test the error handler directly via provider.cloudApi.errorHandler
+    // to verify Retry-After parsing and cap logic without waiting for
+    // actual queue pauses.
+
+    const make429Error = (retryAfter) => {
+      const err = new Error('Too Many Requests');
+      err.statusCode = 429;
+      const headers = {};
+      if (retryAfter !== undefined) {
+        headers['retry-after'] = String(retryAfter);
+      }
+      err.response = { headers: new FakeHttpHeaders(headers) };
+      return err;
+    };
+
+    test('uses Retry-After header value for backoff', function() {
+      const result = provider.cloudApi.errorHandler({
+        err: make429Error(60),
+        tries: 0,
+      });
+      // min(60, 120) * 1000 = 60000ms
+      assert.equal(result.backoff, 60000);
+      assert.equal(result.reason, 'rateLimit');
+      assert.equal(result.level, 'notice');
+    });
+
+    test('caps Retry-After at 120 seconds', function() {
+      const result = provider.cloudApi.errorHandler({
+        err: make429Error(300),
+        tries: 0,
+      });
+      // min(300, 120) * 1000 = 120000ms
+      assert.equal(result.backoff, 120000);
+    });
+
+    test('falls back to default backoff when Retry-After is absent', function() {
+      const err = new Error('Too Many Requests');
+      err.statusCode = 429;
+      err.response = { headers: new FakeHttpHeaders({}) };
+      const result = provider.cloudApi.errorHandler({ err, tries: 0 });
+      // _backoffDelay is 1 in test config, so default = 1 * 50 = 50ms
+      assert.equal(result.backoff, 50);
+    });
+
+    test('falls back to default backoff when Retry-After is non-numeric', function() {
+      const result = provider.cloudApi.errorHandler({
+        err: make429Error('not-a-number'),
+        tries: 0,
+      });
+      assert.equal(result.backoff, 50);
+    });
+
+    test('falls back to default backoff when Retry-After is zero', function() {
+      const result = provider.cloudApi.errorHandler({
+        err: make429Error(0),
+        tries: 0,
+      });
+      // 0 is not > 0, so falls back to default
+      assert.equal(result.backoff, 50);
+    });
+
+    test('falls back to default backoff when Retry-After is negative', function() {
+      const result = provider.cloudApi.errorHandler({
+        err: make429Error(-5),
+        tries: 0,
+      });
+      assert.equal(result.backoff, 50);
+    });
+
+    test('integration: dynamic backoff observed in cloud-api-paused log', async function() {
+      await makeWorkerPool();
+      const worker = Worker.fromApi({
+        workerPoolId,
+        workerGroup: 'westus',
+        workerId: 'backoff-test',
+        providerId,
+        created: taskcluster.fromNow('0 seconds'),
+        lastModified: taskcluster.fromNow('0 seconds'),
+        lastChecked: taskcluster.fromNow('0 seconds'),
+        expires: taskcluster.fromNow('90 seconds'),
+        capacity: 1,
+        state: 'requested',
+        providerData: {
+          ...baseProviderData,
+          vm: { name: 'backoff-vm', operation: 'op/vm/rgrp/backoff-vm' },
+        },
+      });
+      await worker.create(helper.db);
+
+      // Use a small retry-after (2s) to keep the test fast while still
+      // being distinguishable from the default backoff (50ms)
+      fake.restClient.setThrottle(1, {
+        'retry-after': '2',
+        'x-ms-ratelimit-remaining-subscription-reads': '0',
+      });
+
+      const errors = [];
+      await provider.handleOperation({
+        op: 'op/vm/rgrp/backoff-vm',
+        errors,
+        monitor: provider.monitor,
+        worker,
+      });
+
+      const pauseMsg = monitor.manager.messages.find(
+        msg => msg.Type === 'cloud-api-paused' && msg.Fields.reason === 'rateLimit',
+      );
+      assert.ok(pauseMsg, 'expected a cloud-api-paused log');
+      // Retry-After: 2 → min(2, 120) * 1000 = 2000ms
+      assert.equal(pauseMsg.Fields.duration, 2000);
+    });
+  });
+
+  suite('Track 2 pipeline policy', function() {
+    let policy;
+
+    setup(function() {
+      // provider.setup() registers the policy on every Track 2 client's pipeline
+      policy = fake.computeClient.pipeline.getPolicy('rateLimitObservabilityPolicy');
+      assert.ok(policy, 'expected rateLimitObservabilityPolicy on computeClient pipeline');
+    });
+
+    test('policy is registered with afterPhase: Retry', function() {
+      const options = fake.computeClient.pipeline.getPolicyOptions('rateLimitObservabilityPolicy');
+      assert.ok(options, 'expected addPolicy options');
+      assert.equal(options.afterPhase, 'Retry');
+    });
+
+    test('policy is registered on all Track 2 clients', function() {
+      for (const client of [fake.computeClient, fake.networkClient, fake.resourcesClient, fake.deploymentsClient]) {
+        const p = client.pipeline.getPolicy('rateLimitObservabilityPolicy');
+        assert.ok(p, 'expected policy on every Track 2 client');
+      }
+    });
+
+    test('records rate-limit gauge from 200 response', async function() {
+      const gaugeRecords = [];
+      const origMetric = provider.monitor._metric.azureRateLimitRemaining;
+      provider.monitor._metric.azureRateLimitRemaining = (value, labels) => {
+        gaugeRecords.push({ value, labels });
+      };
+
+      try {
+        const mockRequest = { method: 'GET' };
+        const mockResponse = {
+          status: 200,
+          headers: new FakeHttpHeaders({
+            'x-ms-ratelimit-remaining-subscription-reads': '500',
+          }),
+        };
+
+        const result = await policy.sendRequest(mockRequest, async () => mockResponse);
+        assert.equal(result, mockResponse);
+
+        assert.equal(gaugeRecords.length, 1);
+        assert.deepEqual(gaugeRecords[0], {
+          value: 500,
+          labels: { providerId, limitType: 'reads' },
+        });
+
+        // No throttle log on 200
+        const throttleMsg = monitor.manager.messages.find(m => m.Type === 'azure-throttled');
+        assert.ok(!throttleMsg, 'should not emit azure-throttled for 200');
+      } finally {
+        provider.monitor._metric.azureRateLimitRemaining = origMetric;
+      }
+    });
+
+    test('emits azureThrottled log and counter on 429 response', async function() {
+      const counterRecords = [];
+      const origCounter = provider.monitor._metric.azureThrottleCount;
+      provider.monitor._metric.azureThrottleCount = (value, labels) => {
+        counterRecords.push({ value, labels });
+      };
+
+      try {
+        const mockRequest = { method: 'GET' };
+        const mockResponse = {
+          status: 429,
+          headers: new FakeHttpHeaders({
+            'retry-after': '30',
+            'x-ms-ratelimit-remaining-subscription-reads': '0',
+          }),
+        };
+
+        await policy.sendRequest(mockRequest, async () => mockResponse);
+
+        const throttleMsg = monitor.manager.messages.find(m => m.Type === 'azure-throttled');
+        assert.ok(throttleMsg, 'expected azure-throttled log');
+        assert.equal(throttleMsg.Fields.retryAfterSeconds, 30);
+        assert.equal(throttleMsg.Fields.remainingReads, 0);
+        assert.equal(throttleMsg.Fields.operationType, 'read');
+
+        assert.equal(counterRecords.length, 1);
+        assert.equal(counterRecords[0].labels.operationType, 'read');
+      } finally {
+        provider.monitor._metric.azureThrottleCount = origCounter;
+      }
+    });
+
+    test('derives operationType from HTTP method', async function() {
+      const methods = {
+        'GET': 'read',
+        'PUT': 'write',
+        'POST': 'write',
+        'PATCH': 'write',
+        'DELETE': 'delete',
+      };
+
+      for (const [method, expectedOpType] of Object.entries(methods)) {
+        monitor.manager.reset();
+        const mockResponse = {
+          status: 429,
+          headers: new FakeHttpHeaders({ 'retry-after': '1' }),
+        };
+
+        await policy.sendRequest({ method }, async () => mockResponse);
+
+        const throttleMsg = monitor.manager.messages.find(m => m.Type === 'azure-throttled');
+        assert.ok(throttleMsg, `expected azure-throttled for ${method}`);
+        assert.equal(throttleMsg.Fields.operationType, expectedOpType,
+          `${method} should map to ${expectedOpType}`);
+      }
+    });
+
+    test('passes response through unmodified', async function() {
+      const mockResponse = {
+        status: 200,
+        headers: new FakeHttpHeaders({}),
+        body: { data: 'test' },
+      };
+
+      const result = await policy.sendRequest({ method: 'GET' }, async () => mockResponse);
+      assert.strictEqual(result, mockResponse);
+    });
   });
 
   suite('scanCleanup', function() {

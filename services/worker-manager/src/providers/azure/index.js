@@ -143,8 +143,29 @@ export class AzureProvider extends Provider {
       monitor: this.monitor,
       providerId: this.providerId,
       errorHandler: ({ err, tries }) => {
+        // Record rate-limit headers from all errors that carry them
+        if (err.response?.headers) {
+          const method = (err.request?.method || 'GET').toUpperCase();
+          const opType = method === 'DELETE' ? 'delete'
+            : (method === 'PUT' || method === 'POST' || method === 'PATCH') ? 'write'
+              : 'read';
+          this._recordRateLimitHeaders({
+            headers: err.response.headers,
+            statusCode: err.statusCode || err.response.status || 0,
+            operationType: opType,
+          });
+        }
+
         if (err.statusCode === 429) { // too many requests
-          return { backoff: _backoffDelay * 50, reason: 'rateLimit', level: 'notice' };
+          let backoff = _backoffDelay * 50;
+          const retryAfterRaw = err.response?.headers?.get?.('retry-after');
+          if (retryAfterRaw != null) {
+            const retryAfterSec = parseInt(retryAfterRaw, 10);
+            if (!Number.isNaN(retryAfterSec) && retryAfterSec > 0) {
+              backoff = Math.min(retryAfterSec, 120) * 1000;
+            }
+          }
+          return { backoff, reason: 'rateLimit', level: 'notice' };
         } else if (err.statusCode >= 500) { // For 500s, let's take a shorter backoff
           return { backoff: _backoffDelay * Math.pow(2, tries), reason: 'errors', level: 'warning' };
         }
@@ -176,6 +197,30 @@ export class AzureProvider extends Provider {
     this.resourcesClient = new azureApi.ResourceManagementClient(credentials, subscriptionId);
     this.deploymentsClient = new azureApi.DeploymentsClient(credentials, subscriptionId);
     this.restClient = new azureApi.AzureServiceClient(credentials);
+
+    // Add a pipeline policy to Track 2 clients that records Azure rate-limit
+    // headers from every response for observability (gauges + throttle logs).
+    const rateLimitPolicy = {
+      name: 'rateLimitObservabilityPolicy',
+      sendRequest: async (request, next) => {
+        const response = await next(request);
+        const method = (request.method || 'GET').toUpperCase();
+        const operationType = method === 'DELETE' ? 'delete'
+          : (method === 'PUT' || method === 'POST' || method === 'PATCH') ? 'write'
+            : 'read';
+        this._recordRateLimitHeaders({
+          headers: response.headers,
+          statusCode: response.status,
+          operationType,
+        });
+        return response;
+      },
+    };
+    for (const client of [this.computeClient, this.networkClient, this.resourcesClient, this.deploymentsClient]) {
+      if (client.pipeline) {
+        client.pipeline.addPolicy(rateLimitPolicy, { afterPhase: 'Retry' });
+      }
+    }
   }
 
   /**
@@ -1186,6 +1231,67 @@ export class AzureProvider extends Provider {
   }
 
   /**
+   * Extract Azure rate-limit headers and emit observability signals.
+   *
+   * @param {object} options
+   * @param {{ get(name: string): string|null|undefined }} options.headers - headers with .get
+   * @param {number} options.statusCode - HTTP status code (e.g., 429).
+   * @param {string} options.operationType - 'read', 'write', or 'delete'.
+   * @param {import('@taskcluster/lib-monitor').Monitor} [options.monitor] - Optional worker-scoped monitor.
+   */
+  _recordRateLimitHeaders({ headers, statusCode, operationType, monitor }) {
+    if (!headers || typeof headers.get !== 'function') {
+      return;
+    }
+
+    const mon = monitor || this.monitor;
+
+    const parseIntSafe = (val) => {
+      if (val == null) {return null;}
+      const n = parseInt(val, 10);
+      return Number.isNaN(n) ? null : Math.max(n, 0);
+    };
+
+    const remainingReads = parseIntSafe(headers.get('x-ms-ratelimit-remaining-subscription-reads'));
+    const remainingWrites = parseIntSafe(headers.get('x-ms-ratelimit-remaining-subscription-writes'));
+    const remainingDeletes = parseIntSafe(headers.get('x-ms-ratelimit-remaining-subscription-deletes'));
+    const remainingResource = headers.get('x-ms-ratelimit-remaining-resource') || null;
+    const retryAfterSeconds = parseIntSafe(headers.get('retry-after'));
+
+    if (remainingReads !== null) {
+      mon.metric.azureRateLimitRemaining(remainingReads, {
+        providerId: this.providerId, limitType: 'reads',
+      });
+    }
+    if (remainingWrites !== null) {
+      mon.metric.azureRateLimitRemaining(remainingWrites, {
+        providerId: this.providerId, limitType: 'writes',
+      });
+    }
+    if (remainingDeletes !== null) {
+      mon.metric.azureRateLimitRemaining(remainingDeletes, {
+        providerId: this.providerId, limitType: 'deletes',
+      });
+    }
+
+    if (statusCode === 429) {
+      mon.log.azureThrottled({
+        providerId: this.providerId,
+        operationType,
+        retryAfterSeconds,
+        remainingReads,
+        remainingWrites,
+        remainingDeletes,
+        remainingResource,
+      });
+      mon.metric.azureThrottleCount(1, {
+        providerId: this.providerId,
+        operationType,
+      });
+    }
+  }
+
+  /**
    * Checks the status of ongoing Azure operations
    * Returns true if the operation is in progress, false otherwise
    *
@@ -1198,14 +1304,18 @@ export class AzureProvider extends Provider {
     monitor.debug({ message: 'handling operation', op });
     let req, resp;
     try {
-      // NB: we don't respect azure's Retry-After header, we assume our iteration
-      // will wait long enough, and we keep trying
       // see here: https://docs.microsoft.com/en-us/azure/azure-resource-manager/management/async-operations
       req = new azureApi.msRestJS.WebResource(op, 'GET');
       // sendLongRunningRequest polls until finished but this is just reading
       // the status of an operation so it shouldn't block long
       // it's ok if we hit an error here, that will trigger resource teardown
       resp = await this._enqueue('opRead', () => this.restClient.sendLongRunningRequest(req));
+      this._recordRateLimitHeaders({
+        headers: resp.headers,
+        statusCode: resp.status,
+        operationType: 'read',
+        monitor,
+      });
     } catch (err) {
       monitor.debug({ message: 'reading operation failed', op, error: err.message });
       // this was a connection error of some sort, so we don't really know anything about
