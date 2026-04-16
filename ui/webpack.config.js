@@ -122,7 +122,12 @@ module.exports = (_, { mode }) => ({
       },
       {
         test: /\.(js|jsx)$/,
-        include: [`${__dirname}/src`, `${__dirname}/test`],
+        include: [
+          `${__dirname}/src`,
+          `${__dirname}/test`,
+          resolve(__dirname, "node_modules/@sentry"),
+          resolve(__dirname, "node_modules/@sentry-internal"),
+        ],
         use: [
           {
             loader: "babel-loader",

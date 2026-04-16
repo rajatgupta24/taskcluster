@@ -177,7 +177,10 @@ export default class App extends Component {
       // Data Source Name (DSN), a configuration required by the Sentry SDK
       initSentry({
         dsn: window.env.SENTRY_DSN,
-        autoSessionTracking: false,
+        // autoSessionTracking was removed in Sentry v8+; disable
+        // session tracking by filtering out the BrowserSession integration.
+        integrations: defaults =>
+          defaults.filter(i => i.name !== 'BrowserSession'),
       });
     }
 
