@@ -3,6 +3,105 @@
 <!-- `yarn release` will insert the existing changelog snippets here: -->
 <!-- NEXT RELEASE HERE -->
 
+## v99.1.0
+
+### GENERAL
+
+▶ [patch]
+Upgrades to go1.26.2 [SECURITY].
+
+### DEPLOYERS
+
+▶ [minor] [#8502](https://github.com/taskcluster/taskcluster/issues/8502)
+A new Prometheus histogram metric `iterate_duration_seconds` is now emitted by
+all background iteration loops (provisioner, worker-scanner, queue resolvers,
+etc.) via `lib-iterate`.
+
+The metric is registered as a global builtin, meaning it automatically
+propagates to whichever Prometheus registry a process exposes — no per-service
+configuration is required. It is a no-op in deployments without Prometheus
+configured.
+
+▶ [minor] [#8497](https://github.com/taskcluster/taskcluster/issues/8497)
+The worker-manager Azure provider now captures ARM throttling signals for observability.
+When Azure returns rate-limit headers (`x-ms-ratelimit-remaining-subscription-reads`, `-writes`, `-deletes`,
+`x-ms-ratelimit-remaining-resource`, `Retry-After`), the provider records them as Prometheus metrics and,
+on HTTP 429 responses, emits a structured `azureThrottled` warning log with the full header payload.
+
+New Prometheus metrics:
+- `worker_manager_azure_throttle_total` (counter) — incremented on every 429, labeled by `providerId` and `operationType`
+- `worker_manager_azure_ratelimit_remaining` (gauge) — tracks the most recently observed remaining-quota value, labeled by `providerId` and `limitType`
+
+The error handler in CloudAPI's `enqueue` path now respects `Retry-After` headers from Azure, using the server-specified delay (capped at 120 seconds) instead of the previous fixed backoff for 429 responses.
+
+Rate-limit headers are observed on both Track 2 SDK calls (via a pipeline policy) and Track 1 REST polling calls (in `handleOperation`), covering all Azure API interactions made by the provider.
+
+▶ [patch] [#8470](https://github.com/taskcluster/taskcluster/issues/8470)
+The worker-manager scanner now guards against overlapping scan loops and adds a per-worker timeout to `checkWorker` calls. Previously, when a scan exceeded `maxIterationTime` (common with large Azure worker pools), `lib-iterate` would start a new iteration while the old one was still running, resetting shared state and causing crashes in provider `checkWorker` methods. The scanner now detects loop overlap to prevent silent state corruption, and times out individual `checkWorker` calls after 60 seconds so a single hung cloud API call cannot abort the entire scan.
+
+### USERS
+
+▶ [minor] [#8430](https://github.com/taskcluster/taskcluster/issues/8430)
+The GitHub service now supports triggering Taskcluster hooks directly from
+`.taskcluster.yml`. Add a `hooks` array to your config to trigger one or more
+hooks on push, pull request, or other events:
+
+```yaml
+hooks:
+  - name: taskgraph/decision
+    context:
+      project: myproject
+```
+
+Each hook is triggered via the `hooks.triggerHook` API with a payload
+containing `event`, `now`, `taskcluster_root_url`, `tasks_for`, `taskId`, and
+the user-defined `context`. `hooks` and `tasks` may be used together in the same
+`.taskcluster.yml`. `autoCancelPreviousChecks` applies to hooks the same way it
+does to tasks.
+
+▶ [patch]
+The claim resolver no longer stalls between batches, only backing off when the
+queue is drained. It also now properly uses its configured batch size instead
+of being hardcoded to 32.
+
+▶ [patch]
+The deadline resolver no longer stalls between batches, only backing off when
+the queue is drained.
+
+▶ [patch]
+The dependency resolver no longer stalls for 5 seconds between every batch of
+32 resolved tasks. It now only backs off when the queue is drained, which
+dramatically improves scheduling latency when many tasks are resolved at once.
+
+### DEVELOPERS
+
+▶ [patch]
+Update `@sentry/node` from v6 to v10. Migrate Sentry SDK usage to v10 APIs: replace removed `configureScope()` with direct `setTag()` calls, update import style, and remove deprecated `autoSessionTracking` option.
+
+### OTHER
+
+▶ Additional change not described here: [#7838](https://github.com/taskcluster/taskcluster/issues/7838).
+
+### Automated Package Updates
+
+<details>
+<summary>12 Dependabot updates</summary>
+
+* build(deps): bump follow-redirects from 1.15.11 to 1.16.0 (d83f25d05f)
+* build(deps): bump rand from 0.9.2 to 0.9.4 in /clients/client-rust (2915aa6cd9)
+* build(deps): bump follow-redirects in /clients/client-web (95a5965f25)
+* build(deps): bump follow-redirects in /clients/client (6050a5fe59)
+* build(deps): bump follow-redirects in /clients/client-test (d9fc7c449a)
+* build(deps): bump follow-redirects from 1.15.6 to 1.16.0 in /ui (47d88e946c)
+* build(deps): bump github.com/sigstore/timestamp-authority/v2 (f7c2fdbcd2)
+* build(deps): bump axios from 1.13.5 to 1.15.0 (e18dc31ebc)
+* build(deps): bump nodemailer from 7.0.12 to 8.0.5 (f684254bf9)
+* build(deps): bump go.opentelemetry.io/otel/sdk from 1.39.0 to 1.43.0 (5aa58cb1c5)
+* build(deps): bump github.com/aws/aws-sdk-go-v2/service/s3 (05516efaec)
+* build(deps): bump github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream (e891da7f5a)
+
+</details>
+
 ## v99.0.3
 
 ### WORKER-DEPLOYERS
