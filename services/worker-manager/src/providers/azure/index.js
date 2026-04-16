@@ -143,19 +143,11 @@ export class AzureProvider extends Provider {
       monitor: this.monitor,
       providerId: this.providerId,
       errorHandler: ({ err, tries }) => {
-        // Record rate-limit headers from all errors that carry them
-        if (err.response?.headers) {
-          const method = (err.request?.method || 'GET').toUpperCase();
-          const opType = method === 'DELETE' ? 'delete'
-            : (method === 'PUT' || method === 'POST' || method === 'PATCH') ? 'write'
-              : 'read';
-          this._recordRateLimitHeaders({
-            headers: err.response.headers,
-            statusCode: err.statusCode || err.response.status || 0,
-            operationType: opType,
-          });
-        }
-
+        // Rate-limit header recording is NOT done here. The new SDK clients
+        // (computeClient, networkClient, etc.) have a pipeline policy that
+        // records every individual HTTP response including SDK-internal retries.
+        // Recording here would double-count the final failed response.
+        // restClient errors are recorded at the call site (handleOperation).
         if (err.statusCode === 429) { // too many requests
           let backoff = _backoffDelay * 50;
           const retryAfterRaw = err.response?.headers?.get?.('retry-after');
@@ -1317,6 +1309,17 @@ export class AzureProvider extends Provider {
         monitor,
       });
     } catch (err) {
+      // Record rate-limit headers from restClient errors. The restClient has
+      // no pipeline policy, so this is the only recording point. errorHandler
+      // skips recording to avoid double-counting errors from SDK clients.
+      if (err.response?.headers) {
+        this._recordRateLimitHeaders({
+          headers: err.response.headers,
+          statusCode: err.response.status || err.statusCode || 0,
+          operationType: 'read',
+          monitor,
+        });
+      }
       monitor.debug({ message: 'reading operation failed', op, error: err.message });
       // this was a connection error of some sort, so we don't really know anything about
       // the status of the operation.  Return true on the assumption that this was a transient

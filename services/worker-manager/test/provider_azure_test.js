@@ -2994,10 +2994,40 @@ helper.secrets.mockSuite(testing.suiteName(), [], function(mock, skipping) {
       }
     });
 
-    test('emits azureThrottled log and counter when handleOperation encounters 429', async function() {
-      // Use a small retry-after (1s) to keep the test fast —
-      // the dynamic backoff actually pauses the CloudAPI queue
+    test('transient restClient 429 does not emit azureThrottled (handled by CloudAPI backoff only)', async function() {
+      // setThrottle(1): first call throws 429, CloudAPI retries, second call succeeds.
+      // errorHandler no longer records headers (to avoid double-counting SDK clients),
+      // so transient restClient 429s only show up in the generic cloudApiPaused log.
       fake.restClient.setThrottle(1, {
+        'retry-after': '1',
+        'x-ms-ratelimit-remaining-subscription-reads': '0',
+      });
+
+      const errors = [];
+      await provider.handleOperation({
+        op: 'op/vm/rgrp/obs-vm',
+        errors,
+        monitor: provider.monitor,
+        worker,
+      });
+
+      // CloudAPI still logs the queue pause
+      const pauseMsg = monitor.manager.messages.find(
+        msg => msg.Type === 'cloud-api-paused' && msg.Fields.reason === 'rateLimit',
+      );
+      assert.ok(pauseMsg, 'expected cloudApiPaused log for the transient 429');
+
+      // But no azureThrottled log — errorHandler no longer records
+      const throttleMsg = monitor.manager.messages.find(
+        msg => msg.Type === 'azure-throttled',
+      );
+      assert.ok(!throttleMsg, 'transient restClient 429 should not produce azureThrottled');
+    });
+
+    test('persistent restClient 429 emits azureThrottled once from handleOperation catch', async function() {
+      // setThrottle(6): exceeds CloudAPI's 5 retries (tries > 4), so the error
+      // propagates to handleOperation's catch which records it exactly once.
+      fake.restClient.setThrottle(6, {
         'retry-after': '1',
         'x-ms-ratelimit-remaining-subscription-reads': '0',
         'x-ms-ratelimit-remaining-resource': 'Microsoft.Compute/LowPriority;0',
@@ -3011,26 +3041,28 @@ helper.secrets.mockSuite(testing.suiteName(), [], function(mock, skipping) {
 
       try {
         const errors = [];
-        await provider.handleOperation({
+        // handleOperation catches the exhausted-retry error and returns true
+        const result = await provider.handleOperation({
           op: 'op/vm/rgrp/obs-vm',
           errors,
           monitor: provider.monitor,
           worker,
         });
+        assert.equal(result, true, 'handleOperation returns true on error (come back later)');
 
-        // The 429 goes through the errorHandler which calls _recordRateLimitHeaders
-        const throttleMsg = monitor.manager.messages.find(
+        // Exactly one azureThrottled log from handleOperation's catch
+        const throttleMsgs = monitor.manager.messages.filter(
           msg => msg.Type === 'azure-throttled',
         );
-        assert.ok(throttleMsg, 'expected an azure-throttled log from the error handler path');
-        assert.equal(throttleMsg.Fields.providerId, providerId);
-        assert.equal(throttleMsg.Fields.operationType, 'read');
-        assert.equal(throttleMsg.Fields.retryAfterSeconds, 1);
-        assert.equal(throttleMsg.Fields.remainingReads, 0);
-        assert.equal(throttleMsg.Fields.remainingResource, 'Microsoft.Compute/LowPriority;0');
+        assert.equal(throttleMsgs.length, 1, 'expected exactly one azure-throttled log');
+        assert.equal(throttleMsgs[0].Fields.providerId, providerId);
+        assert.equal(throttleMsgs[0].Fields.operationType, 'read');
+        assert.equal(throttleMsgs[0].Fields.retryAfterSeconds, 1);
+        assert.equal(throttleMsgs[0].Fields.remainingReads, 0);
+        assert.equal(throttleMsgs[0].Fields.remainingResource, 'Microsoft.Compute/LowPriority;0');
 
-        // Counter should have been incremented
-        assert.ok(counterRecords.length > 0, 'expected azureThrottleCount to be incremented');
+        // Counter incremented exactly once
+        assert.equal(counterRecords.length, 1, 'expected exactly one counter increment');
         assert.equal(counterRecords[0].labels.operationType, 'read');
       } finally {
         provider.monitor._metric.azureThrottleCount = origCounter;
