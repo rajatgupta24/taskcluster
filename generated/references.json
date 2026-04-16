@@ -18010,6 +18010,33 @@
           "type": "counter"
         },
         {
+          "buckets": [
+            1,
+            5,
+            10,
+            30,
+            60,
+            120,
+            300,
+            600,
+            1200,
+            1800,
+            3600,
+            6000
+          ],
+          "description": "Duration of a single background iteration loop",
+          "labels": {
+            "name": "Name of the iterate loop",
+            "status": "Result: success or exception"
+          },
+          "name": "iterate_duration_seconds",
+          "registers": [
+            "default"
+          ],
+          "title": "Background iteration duration",
+          "type": "histogram"
+        },
+        {
           "description": "This number represents difference in pending tasks and idle capacity.\nAdjustment is needed to make sure workers that are still running and are currently\nnot doing any work, will soon pick up those tasks, so we don't need additional workers for those.\nAssumption is that those idling workers would pick up tasks soon.",
           "labels": {
             "providerId": "ID of the provider",
@@ -19947,6 +19974,33 @@
           ],
           "title": "Total number of HTTP requests",
           "type": "counter"
+        },
+        {
+          "buckets": [
+            1,
+            5,
+            10,
+            30,
+            60,
+            120,
+            300,
+            600,
+            1200,
+            1800,
+            3600,
+            6000
+          ],
+          "description": "Duration of a single background iteration loop",
+          "labels": {
+            "name": "Name of the iterate loop",
+            "status": "Result: success or exception"
+          },
+          "name": "iterate_duration_seconds",
+          "registers": [
+            "default"
+          ],
+          "title": "Background iteration duration",
+          "type": "histogram"
         }
       ],
       "serviceName": "web-server"
@@ -20377,6 +20431,33 @@
           ],
           "title": "Total number of HTTP requests",
           "type": "counter"
+        },
+        {
+          "buckets": [
+            1,
+            5,
+            10,
+            30,
+            60,
+            120,
+            300,
+            600,
+            1200,
+            1800,
+            3600,
+            6000
+          ],
+          "description": "Duration of a single background iteration loop",
+          "labels": {
+            "name": "Name of the iterate loop",
+            "status": "Result: success or exception"
+          },
+          "name": "iterate_duration_seconds",
+          "registers": [
+            "default"
+          ],
+          "title": "Background iteration duration",
+          "type": "histogram"
         }
       ],
       "serviceName": "secrets"
@@ -20766,6 +20847,33 @@
           ],
           "title": "Total number of HTTP requests",
           "type": "counter"
+        },
+        {
+          "buckets": [
+            1,
+            5,
+            10,
+            30,
+            60,
+            120,
+            300,
+            600,
+            1200,
+            1800,
+            3600,
+            6000
+          ],
+          "description": "Duration of a single background iteration loop",
+          "labels": {
+            "name": "Name of the iterate loop",
+            "status": "Result: success or exception"
+          },
+          "name": "iterate_duration_seconds",
+          "registers": [
+            "default"
+          ],
+          "title": "Background iteration duration",
+          "type": "histogram"
         },
         {
           "description": "Total number of claimed tasks",
@@ -23151,6 +23259,33 @@
           ],
           "title": "Total number of HTTP requests",
           "type": "counter"
+        },
+        {
+          "buckets": [
+            1,
+            5,
+            10,
+            30,
+            60,
+            120,
+            300,
+            600,
+            1200,
+            1800,
+            3600,
+            6000
+          ],
+          "description": "Duration of a single background iteration loop",
+          "labels": {
+            "name": "Name of the iterate loop",
+            "status": "Result: success or exception"
+          },
+          "name": "iterate_duration_seconds",
+          "registers": [
+            "default"
+          ],
+          "title": "Background iteration duration",
+          "type": "histogram"
         }
       ],
       "serviceName": "purge-cache"
@@ -23525,6 +23660,33 @@
           ],
           "title": "Total number of HTTP requests",
           "type": "counter"
+        },
+        {
+          "buckets": [
+            1,
+            5,
+            10,
+            30,
+            60,
+            120,
+            300,
+            600,
+            1200,
+            1800,
+            3600,
+            6000
+          ],
+          "description": "Duration of a single background iteration loop",
+          "labels": {
+            "name": "Name of the iterate loop",
+            "status": "Result: success or exception"
+          },
+          "name": "iterate_duration_seconds",
+          "registers": [
+            "default"
+          ],
+          "title": "Background iteration duration",
+          "type": "histogram"
         }
       ],
       "serviceName": "object"
@@ -23932,6 +24094,33 @@
           ],
           "title": "Total number of HTTP requests",
           "type": "counter"
+        },
+        {
+          "buckets": [
+            1,
+            5,
+            10,
+            30,
+            60,
+            120,
+            300,
+            600,
+            1200,
+            1800,
+            3600,
+            6000
+          ],
+          "description": "Duration of a single background iteration loop",
+          "labels": {
+            "name": "Name of the iterate loop",
+            "status": "Result: success or exception"
+          },
+          "name": "iterate_duration_seconds",
+          "registers": [
+            "default"
+          ],
+          "title": "Background iteration duration",
+          "type": "histogram"
         }
       ],
       "serviceName": "notify"
@@ -24551,6 +24740,33 @@
           ],
           "title": "Total number of HTTP requests",
           "type": "counter"
+        },
+        {
+          "buckets": [
+            1,
+            5,
+            10,
+            30,
+            60,
+            120,
+            300,
+            600,
+            1200,
+            1800,
+            3600,
+            6000
+          ],
+          "description": "Duration of a single background iteration loop",
+          "labels": {
+            "name": "Name of the iterate loop",
+            "status": "Result: success or exception"
+          },
+          "name": "iterate_duration_seconds",
+          "registers": [
+            "default"
+          ],
+          "title": "Background iteration duration",
+          "type": "histogram"
         }
       ],
       "serviceName": "index"
@@ -25037,6 +25253,33 @@
           ],
           "title": "Total number of HTTP requests",
           "type": "counter"
+        },
+        {
+          "buckets": [
+            1,
+            5,
+            10,
+            30,
+            60,
+            120,
+            300,
+            600,
+            1200,
+            1800,
+            3600,
+            6000
+          ],
+          "description": "Duration of a single background iteration loop",
+          "labels": {
+            "name": "Name of the iterate loop",
+            "status": "Result: success or exception"
+          },
+          "name": "iterate_duration_seconds",
+          "registers": [
+            "default"
+          ],
+          "title": "Background iteration duration",
+          "type": "histogram"
         }
       ],
       "serviceName": "hooks"
@@ -25694,6 +25937,33 @@
           ],
           "title": "Total number of HTTP requests",
           "type": "counter"
+        },
+        {
+          "buckets": [
+            1,
+            5,
+            10,
+            30,
+            60,
+            120,
+            300,
+            600,
+            1200,
+            1800,
+            3600,
+            6000
+          ],
+          "description": "Duration of a single background iteration loop",
+          "labels": {
+            "name": "Name of the iterate loop",
+            "status": "Result: success or exception"
+          },
+          "name": "iterate_duration_seconds",
+          "registers": [
+            "default"
+          ],
+          "title": "Background iteration duration",
+          "type": "histogram"
         }
       ],
       "serviceName": "github"
@@ -26406,6 +26676,33 @@
           ],
           "title": "Total number of HTTP requests",
           "type": "counter"
+        },
+        {
+          "buckets": [
+            1,
+            5,
+            10,
+            30,
+            60,
+            120,
+            300,
+            600,
+            1200,
+            1800,
+            3600,
+            6000
+          ],
+          "description": "Duration of a single background iteration loop",
+          "labels": {
+            "name": "Name of the iterate loop",
+            "status": "Result: success or exception"
+          },
+          "name": "iterate_duration_seconds",
+          "registers": [
+            "default"
+          ],
+          "title": "Background iteration duration",
+          "type": "histogram"
         }
       ],
       "serviceName": "built-in-workers"
@@ -26637,6 +26934,33 @@
           ],
           "title": "Total number of HTTP requests",
           "type": "counter"
+        },
+        {
+          "buckets": [
+            1,
+            5,
+            10,
+            30,
+            60,
+            120,
+            300,
+            600,
+            1200,
+            1800,
+            3600,
+            6000
+          ],
+          "description": "Duration of a single background iteration loop",
+          "labels": {
+            "name": "Name of the iterate loop",
+            "status": "Result: success or exception"
+          },
+          "name": "iterate_duration_seconds",
+          "registers": [
+            "default"
+          ],
+          "title": "Background iteration duration",
+          "type": "histogram"
         }
       ],
       "serviceName": "auth"
