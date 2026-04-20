@@ -5,9 +5,7 @@ metadata:
   labels: {$eval: labels}
 spec:
   gatewayClassName: '{{ .Values.gatewayClassName | default "nginx" }}'
-  addresses:
-  - type: NamedAddress
-    value: '{{ .Values.gatewayStaticIpName | default "" }}'
+  addresses: GATEWAY_ADDRESSES_BLOCK
   listeners:
   - name: https
     port: 443
@@ -15,8 +13,7 @@ spec:
     hostname: '{{ substr 8 -1 (trimSuffix "/" .Values.rootUrl) }}'
     tls:
       mode: Terminate
-      options:
-        networking.gke.io/cert-manager-certs: '{{ .Values.gcpManagedCertName | default "" }}'
+      options: GATEWAY_TLS_OPTIONS_BLOCK
     allowedRoutes:
       namespaces:
         from: Same

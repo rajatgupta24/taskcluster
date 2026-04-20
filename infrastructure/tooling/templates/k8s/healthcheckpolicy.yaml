@@ -1,7 +1,7 @@
 apiVersion: networking.gke.io/v1
 kind: HealthCheckPolicy
 metadata:
-  name: ${projectName}-hc
+  name: ${hcName}
   labels: {$eval: labels}
 spec:
   default:
