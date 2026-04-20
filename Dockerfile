@@ -71,6 +71,9 @@ WORKDIR /app
 # Create /references directory for references service with proper ownership
 RUN mkdir -p /references && chown 1000:1000 /references
 
+# Allow nginx to write its default log path when running as non-root
+RUN mkdir -p /var/lib/nginx/logs && chown -R 1000:1000 /var/lib/nginx
+
 # use non-root, node user
 # https://github.com/nodejs/docker-node/blob/main/docs/BestPractices.md#non-root-user
 USER 1000
