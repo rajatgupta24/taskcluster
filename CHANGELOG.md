@@ -3,6 +3,49 @@
 <!-- `yarn release` will insert the existing changelog snippets here: -->
 <!-- NEXT RELEASE HERE -->
 
+## v99.1.1
+
+### GENERAL
+
+▶ [patch]
+Upgrades to Node.js v24.15.0 and yarn 4.14.1
+
+### DEPLOYERS
+
+▶ [patch] [#8517](https://github.com/taskcluster/taskcluster/issues/8517)
+Fixed Azure provider workers getting stuck in `STOPPING` indefinitely when their backing Azure resources (VM, NIC, IP, disks, or ARM deployment) were deleted out-of-band (e.g. Spot preemption, ARM cascade delete). The `deprovisionResource` helper now treats a `404` from `beginDelete` the same way as a `404` from `get`: mark the resource as deleted and let the reap path continue.
+
+▶ [patch] [#8270](https://github.com/taskcluster/taskcluster/issues/8270)
+Fixed a permission error on startup where nginx could not open its default error log
+at `/var/lib/nginx/logs/error.log` when the container runs as a non-root user (UID 1000).
+
+### USERS
+
+▶ [patch] [#7802](https://github.com/taskcluster/taskcluster/issues/7802)
+The pending tasks and claimed tasks pages now correctly display errors (such as
+insufficient scopes) instead of showing a blank page when the worker pool is
+also absent from worker-manager.
+
+### DEVELOPERS
+
+▶ [patch] [#8325](https://github.com/taskcluster/taskcluster/issues/8325)
+Fixed a flaky test in the worker-manager launch config selector suite by increasing the statistical sample size from 100 to 500 draws.
+
+▶ [patch]
+Yarn will not execute the postinstall scripts from third-party packages when installing the project. This change helps to reduce supply-chain risks by preventing potentially malicious scripts from running automatically.
+
+Note that you also have the ability to disable scripts on a per-package basis using `dependenciesMeta`, or to re-enable a specific script by combining `enableScripts` and `dependenciesMeta`.
+
+### Automated Package Updates
+
+<details>
+<summary>2 Dependabot updates</summary>
+
+* build(deps): bump github.com/go-git/go-git/v5 from 5.17.1 to 5.18.0 (5950fbfc32)
+* build(deps): bump protobufjs from 7.5.3 to 7.5.5 (b1dda113ee)
+
+</details>
+
 ## v99.1.0
 
 ### GENERAL
