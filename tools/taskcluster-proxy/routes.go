@@ -255,13 +255,6 @@ func (routes *Routes) commonHandler(res http.ResponseWriter, req *http.Request, 
 		}
 		maps.Copy(proxyreq.Header, req.Header)
 
-		// for compatibility, if there is no request Content-Type and the body
-		// has nonzero length, we add a Content-Type header.  See #3521.
-		if _, ok := req.Header["Content-Type"]; !ok && len(body) != 0 {
-			log.Printf("Adding missing Content-Type header (#3521)")
-			proxyreq.Header["Content-Type"] = []string{"application/json"}
-		}
-
 		// Refresh Authorization header with each call...
 		err = routes.Credentials.SignRequest(proxyreq)
 		if err != nil {
