@@ -54,8 +54,40 @@ func verifyPrivateToOwner(filename string) error {
 	}
 	// (note: we don't check gid since the group has no permission to the file)
 
-	if stat.Mode() != os.FileMode(0600) {
-		return fmt.Errorf("%s has mode %#o, not 0600", filename, stat.Mode())
+	if stat.Mode().Perm() != os.FileMode(0600) {
+		return fmt.Errorf("%s has mode %#o, not 0600", filename, stat.Mode().Perm())
 	}
 	return nil
+}
+
+// MakeFilePrivate ensures that the given file is readable only by its owner.
+// If the file already has private permissions (mode 0600, owned by the current
+// user), this is a no-op and the returned bool is false. If the file had
+// looser permissions, they are tightened to 0600 and the returned bool is
+// true. An error is returned if the file cannot be stat'd, if it is owned by
+// a different user, or if chmod fails.
+func MakeFilePrivate(filename string) (bool, error) {
+	stat, err := os.Stat(filename)
+	if err != nil {
+		return false, err
+	}
+
+	uid := int(stat.Sys().(*syscall.Stat_t).Uid)
+	if uid != os.Getuid() {
+		return false, fmt.Errorf("%s has incorrect owner id %d (expected %d); refusing to tighten permissions on a file owned by another user", filename, uid, os.Getuid())
+	}
+
+	if stat.Mode().Perm() == os.FileMode(0600) {
+		return false, nil
+	}
+
+	if err := os.Chmod(filename, 0600); err != nil {
+		return false, fmt.Errorf("could not chmod %s to 0600: %w", filename, err)
+	}
+
+	if err := verifyPrivateToOwner(filename); err != nil {
+		return true, fmt.Errorf("file %s is still not private after chmod: %w", filename, err)
+	}
+
+	return true, nil
 }

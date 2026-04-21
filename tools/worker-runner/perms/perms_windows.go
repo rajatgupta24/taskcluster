@@ -165,3 +165,29 @@ func getCurrentUser() (*windows.SID, error) {
 	sid := tokenuser.User.Sid
 	return sid, err
 }
+
+// MakeFilePrivate ensures that the given file is accessible only by its
+// owner. If the file already has an owner-only ACL, this is a no-op and the
+// returned bool is false. If the file had looser ACLs (or an unexpected
+// owner/group), they are tightened to owner-only and the returned bool is
+// true. An error is returned if the file cannot be stat'd or if the ACLs
+// cannot be modified.
+func MakeFilePrivate(filename string) (bool, error) {
+	if _, err := os.Stat(filename); err != nil {
+		return false, err
+	}
+
+	if verifyErr := verifyPrivateToOwner(filename); verifyErr == nil {
+		return false, nil
+	}
+
+	if err := makePrivateToOwner(filename); err != nil {
+		return false, fmt.Errorf("could not tighten ACLs on %s: %w", filename, err)
+	}
+
+	if err := verifyPrivateToOwner(filename); err != nil {
+		return true, fmt.Errorf("file %s is still not private after tightening: %w", filename, err)
+	}
+
+	return true, nil
+}
