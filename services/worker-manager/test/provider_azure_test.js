@@ -1788,6 +1788,55 @@ helper.secrets.mockSuite(testing.suiteName(), [], function(mock, skipping) {
       // check that there's a request to delete the disk (by name)
       assert.deepEqual(await fake.computeClient.disks.getFakeRequestParameters('rgrp', diskName), {});
     });
+
+    test('beginDelete 404 is treated as already-deleted (ghost worker reaps)', async function() {
+      // Seed the worker with ids for every resource so deprovision goes down
+      // the beginDelete branch, then remove the backing fakes to simulate
+      // Azure having already deleted them out-of-band (Spot preemption,
+      // ARM cascade delete, manual cleanup, etc.).
+      await makeResource('ip', true);
+      await makeResource('nic', true);
+      await makeResource('disks', true, 0);
+      await makeResource('disks', true, 1);
+      await makeResource('vm', true);
+      await worker.update(helper.db, worker => {
+        worker.state = 'running';
+      });
+
+      await provider.removeWorker({ worker, reason: 'test' });
+
+      // remove backing resources so beginDelete throws 404 for each
+      fake.computeClient.virtualMachines.removeFakeResource('rgrp', vmName);
+      fake.networkClient.networkInterfaces.removeFakeResource('rgrp', nicName);
+      fake.networkClient.publicIPAddresses.removeFakeResource('rgrp', ipName);
+      fake.computeClient.disks.removeFakeResource('rgrp', 'disks0');
+      fake.computeClient.disks.removeFakeResource('rgrp', 'disks1');
+
+      // reset errors so we can assert no deletion-error is recorded
+      provider.errors = provider.errors || {};
+      provider.errors[workerPoolId] = [];
+
+      // drive the reap loop. Each call advances one resource (VM -> NIC -> IP -> disks).
+      for (let i = 0; i < 6; i++) {
+        await provider.deprovisionResources({ worker, monitor });
+      }
+
+      const [reloaded] = await helper.getWorkers();
+      assert.equal(reloaded.state, 'stopped', 'ghost worker should progress to stopped');
+      assert.equal(reloaded.providerData.vm.deleted, true);
+      assert.equal(reloaded.providerData.nic.deleted, true);
+      assert.equal(reloaded.providerData.ip.deleted, true);
+      assert.equal(reloaded.providerData.disks[0].deleted, true);
+      assert.equal(reloaded.providerData.disks[1].deleted, true);
+      assert.equal(reloaded.providerData.vm.id, false);
+      assert.equal(reloaded.providerData.nic.id, false);
+      assert.equal(reloaded.providerData.ip.id, false);
+      assert.equal(reloaded.providerData.disks[0].id, false);
+      assert.equal(reloaded.providerData.disks[1].id, false);
+      assert.deepEqual(provider.errors[workerPoolId], [],
+        'no deletion-error should be recorded for out-of-band deletions');
+      helper.assertPulseMessage('worker-stopped', m => m.payload.workerId === reloaded.workerId);
+    });
   });
 
   suite('deprovision', function () {
