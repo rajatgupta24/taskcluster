@@ -193,6 +193,15 @@ class ResourceManager {
   }
 
   /**
+   * Remove a fake resource directly, simulating out-of-band deletion
+   * (e.g. Spot preemption or ARM cascade delete)
+   */
+  removeFakeResource(resourceGroupName, name) {
+    const key = `${resourceGroupName}/${name}`;
+    this._resources.delete(key);
+  }
+
+  /**
    * Modify a fake resource
    */
   modifyFakeResource(resourceGroupName, name, modifier) {

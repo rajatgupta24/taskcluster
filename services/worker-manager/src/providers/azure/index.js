@@ -1906,6 +1906,15 @@ export class AzureProvider extends Provider {
       resourceName: typeData.name,
     });
 
+    const markDeleted = () => worker.update(this.db, worker => {
+      const resource = index !== undefined
+        ? worker.providerData[resourceType][index]
+        : worker.providerData[resourceType];
+      resource.operation = undefined;
+      resource.id = false;
+      resource.deleted = true;
+    });
+
     if (typeData?.deleted === true) {
       // if resource was already deleted we don't have to query api by name again to make sure it is 404
       // and avoid being queried multiple times during deprovision cycles
@@ -1932,18 +1941,7 @@ export class AzureProvider extends Provider {
       } catch (err) {
         if (err.statusCode === 404) {
           debug(`resource ${typeData.name} not found; removing its id and marking as deleted`);
-          await worker.update(this.db, worker => {
-            if (index !== undefined) {
-              worker.providerData[resourceType][index].operation = undefined;
-              worker.providerData[resourceType][index].id = false;
-              worker.providerData[resourceType][index].deleted = true;
-            } else {
-              worker.providerData[resourceType].operation = undefined;
-              worker.providerData[resourceType].id = false;
-              worker.providerData[resourceType].deleted = true;
-            }
-          });
-
+          await markDeleted();
           return true;
         }
         throw err;
@@ -1963,6 +1961,13 @@ export class AzureProvider extends Provider {
           typeData.name,
         ));
       } catch (err) {
+        if (err.statusCode === 404) {
+          // resource was deleted out-of-band (e.g. Spot preemption or ARM cascade delete);
+          // treat the same way as the get()->404 branch above so the worker can progress
+          debug(`resource ${typeData.name} already absent on delete; marking as deleted`);
+          await markDeleted();
+          return true;
+        }
         if (err.statusCode === 409 &&
             /previous deployment.*still active/i.test(err.message ?? '')) {
           debug('deployment still active; will retry deletion later');
