@@ -168,10 +168,12 @@ func getCurrentUser() (*windows.SID, error) {
 
 // MakeFilePrivate ensures that the given file is accessible only by its
 // owner. If the file already has an owner-only ACL, this is a no-op and the
-// returned bool is false. If the file had looser ACLs (or an unexpected
-// owner/group), they are tightened to owner-only and the returned bool is
-// true. An error is returned if the file cannot be stat'd or if the ACLs
-// cannot be modified.
+// returned bool is false. If the file had looser ACLs, they are tightened
+// to owner-only and the returned bool is true. To match the POSIX
+// semantics, this function refuses to rewrite the owner of a file that
+// belongs to a different user (which would also require SeTakeOwnership on
+// Windows). An error is returned if the file cannot be stat'd, if it is
+// owned by a different user, or if the ACLs cannot be modified.
 func MakeFilePrivate(filename string) (bool, error) {
 	if _, err := os.Stat(filename); err != nil {
 		return false, err
@@ -179,6 +181,26 @@ func MakeFilePrivate(filename string) (bool, error) {
 
 	if verifyErr := verifyPrivateToOwner(filename); verifyErr == nil {
 		return false, nil
+	}
+
+	// Refuse to take ownership of a file owned by a different user.
+	si, err := windows.GetNamedSecurityInfo(
+		filename,
+		windows.SE_FILE_OBJECT,
+		windows.OWNER_SECURITY_INFORMATION)
+	if err != nil {
+		return false, fmt.Errorf("could not read owner of %s: %w", filename, err)
+	}
+	owner, _, err := si.Owner()
+	if err != nil {
+		return false, fmt.Errorf("could not read owner of %s: %w", filename, err)
+	}
+	currentUser, err := getCurrentUser()
+	if err != nil {
+		return false, err
+	}
+	if owner.String() != currentUser.String() {
+		return false, fmt.Errorf("%s is owned by %s (expected %s); refusing to tighten permissions on a file owned by another user", filename, owner, currentUser)
 	}
 
 	if err := makePrivateToOwner(filename); err != nil {

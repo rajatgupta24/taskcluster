@@ -14,7 +14,9 @@ import (
 
 // copyTestConfigToTempFile copies the checked-in test-config.yml into a
 // temporary directory so tests that need to mutate file permissions don't
-// touch the source tree.
+// touch the source tree. An explicit Chmod is applied after the write so
+// the resulting mode is deterministic regardless of the test runner's
+// umask (which would otherwise mask the mode passed to os.WriteFile).
 func copyTestConfigToTempFile(t *testing.T, mode os.FileMode) string {
 	t.Helper()
 	_, sourceFilename, _, _ := runtime.Caller(0)
@@ -23,6 +25,7 @@ func copyTestConfigToTempFile(t *testing.T, mode os.FileMode) string {
 	require.NoError(t, err)
 	dst := filepath.Join(t.TempDir(), "runner.yml")
 	require.NoError(t, os.WriteFile(dst, data, mode))
+	require.NoError(t, os.Chmod(dst, mode))
 	return dst
 }
 
