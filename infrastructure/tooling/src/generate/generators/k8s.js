@@ -148,6 +148,50 @@ ${yaml.dump(rendered, { lineWidth: -1 }).trim()}
 `;
 };
 
+// Gateway API resources only render when the deployer has opted in via
+// ingressType: gateway, so existing Ingress-only deployments don't need the
+// Gateway API CRDs installed (or skipResourceTypes entries) to upgrade.
+const wrapConditionalGatewayResource = (rendered, resourceName) => {
+  return `{{- if and (eq (.Values.ingressType | default "") "gateway") (not (has "${resourceName}" .Values.skipResourceTypes)) -}}
+${yaml.dump(rendered, { lineWidth: -1 }).trim()}
+{{- end }}
+`;
+};
+
+// GKE-specific Gateway API resources (currently the networking.gke.io/v1
+// HealthCheckPolicy) should only render when the deployer has opted into
+// Gateway API *and* is targeting a GKE gatewayClass; otherwise non-GKE
+// controllers like NGINX Gateway Fabric would fail on the missing CRD.
+const wrapConditionalGkeResource = (rendered, resourceName) => {
+  return `{{- if and (eq (.Values.ingressType | default "") "gateway") (hasPrefix "gke-" (.Values.gatewayClassName | default "")) (not (has "${resourceName}" .Values.skipResourceTypes)) -}}
+${yaml.dump(rendered, { lineWidth: -1 }).trim()}
+{{- end }}
+`;
+};
+
+// The gateway template uses sentinel string values for the optional addresses
+// and TLS options blocks; replace them with helm conditionals so we don't emit
+// invalid Gateway resources (NamedAddress with empty value, or empty TLS
+// options) when gatewayStaticIpName / gcpManagedCertName are unset.
+const postProcessGateway = (rendered) => {
+  return rendered
+    .replace(
+      /^(\s*)addresses: GATEWAY_ADDRESSES_BLOCK\s*$/m,
+      `$1{{- if .Values.gatewayStaticIpName }}
+$1addresses:
+$1- type: NamedAddress
+$1  value: '{{ .Values.gatewayStaticIpName }}'
+$1{{- end }}`,
+    )
+    .replace(
+      /^(\s*)options: GATEWAY_TLS_OPTIONS_BLOCK\s*$/m,
+      `$1{{- if .Values.gcpManagedCertName }}
+$1options:
+$1  networking.gke.io/cert-manager-certs: '{{ .Values.gcpManagedCertName }}'
+$1{{- end }}`,
+    );
+};
+
 const wrapConditionalPodmonitoringResource = (rendered) => {
   return `{{- if and (default false .Values.prometheus.enabled) (not (has "podmonitoring" .Values.skipResourceTypes)) -}}
 ${yaml.dump(rendered, { lineWidth: -1 }).trim()}
@@ -205,9 +249,11 @@ const renderTemplates = async (name, vars, procs, templates) => {
   }
 
   const ingresses = [];
+  const healthChecks = [];
   for (const [proc, conf] of Object.entries(procs)) {
     let tmpl;
     const exposesMetrics = !!procs[proc].metrics;
+    const readinessPath = conf.readinessPath || `/api/${name}/v1/ping`;
     const context = {
       projectName: `taskcluster-${name}`,
       serviceName: name,
@@ -217,7 +263,7 @@ const renderTemplates = async (name, vars, procs, templates) => {
       needsService: false,
       exposesMetrics,
       wrapReplicas: false,
-      readinessPath: conf.readinessPath || `/api/${name}/v1/ping`,
+      readinessPath,
       labels: labels(`taskcluster-${name}`, proc),
     };
     const replacements = {
@@ -235,6 +281,11 @@ const renderTemplates = async (name, vars, procs, templates) => {
         ingresses.push({
           projectName: `taskcluster-${name}`,
           paths: conf['paths'] || [`/api/${name}/*`], // TODO: This version of config is only for gcp ingress :(
+        });
+        healthChecks.push({
+          projectName: `taskcluster-${name}`,
+          procName: proc,
+          readinessPath,
         });
         await writeRepoYAML(path.join(TMPL_DIR, file), rendered);
         const hpaContext = {
@@ -270,7 +321,7 @@ const renderTemplates = async (name, vars, procs, templates) => {
     await writeRepoFile(path.join(TMPL_DIR, filename), processed);
   }
 
-  return ingresses;
+  return { ingresses, healthChecks };
 };
 
 export const tasks = [];
@@ -306,14 +357,16 @@ SERVICES.forEach(name => {
   tasks.push({
     title: `Generate helm templates for ${name}`,
     requires: [`configs-${name}`, `procslist-${name}`, 'k8s-templates', 'k8s-templates-dir'],
-    provides: [`ingresses-${name}`],
+    provides: [`ingresses-${name}`, `healthchecks-${name}`],
     run: async (requirements, utils) => {
       const procs = requirements[`procslist-${name}`];
       const templates = requirements['k8s-templates'];
       const vars = requirements[`configs-${name}`];
       vars.push({ var: 'debug', type: '!env' });
+      const result = await renderTemplates(name, vars, procs, templates);
       return {
-        [`ingresses-${name}`]: await renderTemplates(name, vars, procs, templates),
+        [`ingresses-${name}`]: result.ingresses,
+        [`healthchecks-${name}`]: result.healthChecks,
       };
     },
   });
@@ -358,41 +411,114 @@ Object.entries(extras).forEach(([name, { procs, vars }]) => {
   tasks.push({
     title: `Generate helm templates for ${name}`,
     requires: ['k8s-templates'],
-    provides: [`ingresses-${name}`],
+    provides: [`ingresses-${name}`, `healthchecks-${name}`],
     run: async (requirements, utils) => {
       const templates = requirements['k8s-templates'];
+      const result = await renderTemplates(name, vars, procs, templates);
       return {
-        [`ingresses-${name}`]: await renderTemplates(name, vars, procs, templates),
+        [`ingresses-${name}`]: result.ingresses,
+        [`healthchecks-${name}`]: result.healthChecks,
       };
     },
   });
 });
 
+// Gateway API has a limit of 16 rules per HTTPRoute
+const MAX_HTTPROUTE_RULES = 16;
+
 tasks.push({
   title: `Generate ingress`,
-  requires: ['k8s-templates', 'ingresses-ui', 'ingresses-references', ...SERVICES.map(name => `ingresses-${name}`)],
+  requires: [
+    'k8s-templates',
+    ...['ui', 'references', ...SERVICES].map(name => `ingresses-${name}`),
+    ...['ui', 'references', ...SERVICES].map(name => `healthchecks-${name}`),
+  ],
   provides: [],
   run: async (requirements, utils) => {
     const ingresses = [];
+    const healthChecks = [];
     for (const [name, req] of Object.entries(requirements)) {
       if (name.startsWith('ingresses-')) {
         for (const ingress of req) {
-          for (const path of ingress.paths) {
+          for (const p of ingress.paths) {
             ingresses.push({
-              path,
+              path: p,
+              // Strip trailing /* glob for Gateway API PathPrefix matching
+              pathPrefix: p.replace(/\/?\*$/, '') || '/',
               projectName: ingress.projectName,
             });
           }
         }
       }
+      if (name.startsWith('healthchecks-')) {
+        healthChecks.push(...req);
+      }
     }
     const templates = requirements['k8s-templates'];
+
+    // Generate legacy Ingress resource
     const rendered = jsone(templates['ingress'], {
       ingresses,
       labels: labels(`taskcluster-ingress`, 'ingress'),
     });
     const processed = wrapConditionalResource(rendered, 'ingress');
     await writeRepoFile(path.join(TMPL_DIR, 'ingress.yaml'), processed);
+
+    // Generate Gateway API resources (Gateway + HTTPRoutes + TLS redirect)
+    const gatewayRendered = jsone(templates['gateway'], {
+      labels: labels(`taskcluster-gateway`, 'gateway'),
+    });
+    await writeRepoFile(
+      path.join(TMPL_DIR, 'gateway.yaml'),
+      postProcessGateway(wrapConditionalGatewayResource(gatewayRendered, 'gateway')),
+    );
+
+    // Split ingresses into chunks to stay within the 16-rule-per-HTTPRoute limit.
+    // Always use a numeric suffix so route/file names stay stable when the chunk
+    // count crosses the 16-rule threshold (avoids rename-and-recreate on upgrade).
+    const chunks = _.chunk(ingresses, MAX_HTTPROUTE_RULES);
+    for (let i = 0; i < chunks.length; i++) {
+      const suffix = `-${i + 1}`;
+      const routeName = `taskcluster-routes${suffix}`;
+      const httprouteRendered = jsone(templates['httproute'], {
+        routeName,
+        ingresses: chunks[i],
+        labels: labels(routeName, 'httproute'),
+      });
+      await writeRepoFile(
+        path.join(TMPL_DIR, `httproute${suffix}.yaml`),
+        wrapConditionalGatewayResource(httprouteRendered, 'httproute'),
+      );
+    }
+
+    const redirectRendered = jsone(templates['httproute-redirect'], {
+      labels: labels(`taskcluster-tls-redirect`, 'httproute'),
+    });
+    await writeRepoFile(
+      path.join(TMPL_DIR, 'httproute-redirect.yaml'),
+      wrapConditionalGatewayResource(redirectRendered, 'httproute'),
+    );
+
+    // Generate GKE HealthCheckPolicy per web service+proc. Including procName
+    // in both the resource name and filename prevents collisions if a service
+    // grows multiple web procs (and keeps generated filenames unique). The
+    // resource is networking.gke.io/v1 — only render when the configured
+    // gatewayClassName is a GKE one, so non-GKE controllers (e.g. NGINX
+    // Gateway Fabric) don't fail with "no matches for kind".
+    for (const hc of healthChecks) {
+      const hcName = `${hc.projectName}-${hc.procName}-hc`;
+      const hcRendered = jsone(templates['healthcheckpolicy'], {
+        projectName: hc.projectName,
+        hcName,
+        readinessPath: hc.readinessPath,
+        labels: labels(hcName, 'healthcheckpolicy'),
+      });
+      const hcFile = `${hc.projectName}-${hc.procName}-healthcheckpolicy.yaml`;
+      await writeRepoFile(
+        path.join(TMPL_DIR, hcFile),
+        wrapConditionalGkeResource(hcRendered, 'healthcheckpolicy'),
+      );
+    }
   },
 });
 
@@ -473,7 +599,7 @@ tasks.push({
           description: 'A list of kubernetes resource types to skip creating.  Useful when some resources are being managed externally.',
           items: {
             type: 'string',
-            enum: ['configmap', 'secret', 'ingress', 'serviceaccount', 'podmonitoring'],
+            enum: ['configmap', 'secret', 'ingress', 'gateway', 'httproute', 'healthcheckpolicy', 'serviceaccount', 'podmonitoring'],
           },
         },
 
@@ -530,7 +656,7 @@ tasks.push({
         },
         ingressType: {
           type: 'string',
-          description: 'Allows to use non-GLB ingress types, like "nginx"',
+          description: 'Allows to use non-GLB ingress types: "nginx" for ingress-nginx, or "gateway" for Gateway API',
         },
         ingressTlsSecretName: {
           type: 'string',
@@ -539,6 +665,18 @@ tasks.push({
         certManagerClusterIssuerName: {
           type: 'string',
           description: 'Name of the cluster issuer, i.e. "letsencrypt-prod"',
+        },
+        gatewayClassName: {
+          type: 'string',
+          description: 'GatewayClass name for the Gateway API gateway, e.g. "gke-l7-regional-external-managed". Required when using Gateway API (ingressType: "gateway").',
+        },
+        gatewayStaticIpName: {
+          type: 'string',
+          description: 'Name of the reserved static IP address for the Gateway, e.g. "tc-dev-gateway-ip".',
+        },
+        gcpManagedCertName: {
+          type: 'string',
+          description: 'Name of the GCP Certificate Manager certificate for the Gateway, e.g. "tc-dev-gw-cert".',
         },
         imagePullSecret: {
           type: 'string',
@@ -611,6 +749,9 @@ tasks.push({
       ingressType: '...',
       ingressTlsSecretName: '',
       certManagerClusterIssuerName: '',
+      gatewayClassName: '',
+      gatewayStaticIpName: '',
+      gcpManagedCertName: '',
       pulseHostname: '...',
       pulseAmqps: true,
       pulseVhost: '...',
