@@ -4,7 +4,7 @@ import sinon from 'sinon';
 import assert from 'assert';
 import helper from './helper.js';
 import { FakeAzure, FakeHttpHeaders } from './fakes/index.js';
-import { AzureProvider } from '../src/providers/azure/index.js';
+import { AzureProvider, isAllowedAiaLocation } from '../src/providers/azure/index.js';
 import { dnToString, getAuthorityAccessInfo, getCertFingerprint, cloneCaStore } from '../src/providers/azure/utils.js';
 import testing from '@taskcluster/lib-testing';
 import forge from 'node-forge';
@@ -114,6 +114,65 @@ helper.secrets.mockSuite(testing.suiteName(), [], function(mock, skipping) {
     });
   };
 
+  const createWorkerIdentityProofWithAiaUrl = ({ vmId, aiaUrl, expiresOn = '11/19/30 18:53:30 -0000' }) => {
+    const keys = forge.pki.rsa.generateKeyPair(1024);
+    const cert = forge.pki.createCertificate();
+    cert.publicKey = keys.publicKey;
+    cert.serialNumber = '01';
+    cert.validity.notBefore = new Date('2024-01-01T00:00:00.000Z');
+    cert.validity.notAfter = new Date('2030-01-01T00:00:00.000Z');
+    cert.setSubject([{ name: 'commonName', value: 'metadata.azure.com' }]);
+    cert.setIssuer([{ name: 'commonName', value: 'Unknown-CA' }]);
+
+    const authorityInfoAccess = forge.asn1.create(
+      forge.asn1.Class.UNIVERSAL,
+      forge.asn1.Type.SEQUENCE,
+      true,
+      [forge.asn1.create(
+        forge.asn1.Class.UNIVERSAL,
+        forge.asn1.Type.SEQUENCE,
+        true,
+        [
+          forge.asn1.create(
+            forge.asn1.Class.UNIVERSAL,
+            forge.asn1.Type.OID,
+            false,
+            forge.asn1.oidToDer('1.3.6.1.5.5.7.48.2').getBytes(),
+          ),
+          forge.asn1.create(
+            forge.asn1.Class.CONTEXT_SPECIFIC,
+            6,
+            false,
+            aiaUrl,
+          ),
+        ],
+      )],
+    );
+
+    cert.setExtensions([{
+      name: 'authorityInfoAccess',
+      value: forge.asn1.toDer(authorityInfoAccess).getBytes(),
+    }]);
+    cert.sign(keys.privateKey, forge.md.sha256.create());
+
+    const payload = JSON.stringify({
+      vmId,
+      timeStamp: { expiresOn },
+    });
+
+    const message = forge.pkcs7.createSignedData();
+    message.content = forge.util.createBuffer(payload, 'utf8');
+    message.addCertificate(cert);
+    message.addSigner({
+      key: keys.privateKey,
+      certificate: cert,
+      digestAlgorithm: forge.pki.oids.sha256,
+    });
+    message.sign();
+
+    return Buffer.from(forge.asn1.toDer(message.toAsn1()).getBytes(), 'binary').toString('base64');
+  };
+
   suite('helpers', function() {
     const testCert = forge.pki.certificateFromPem(fs.readFileSync(intermediateCertPath, 'utf-8'));
 
@@ -141,6 +200,37 @@ helper.secrets.mockSuite(testing.suiteName(), [], function(mock, skipping) {
           { method: "OSCP", location: "http://ocsp.digicert.com" },
           { method: 'CA Issuer', location: 'http://cacerts.digicert.com/DigiCertGlobalRootG2.crt' },
         ]);
+    });
+
+    test('isAllowedAiaLocation allows trusted Azure CA hosts', async function() {
+      assert.equal(
+        isAllowedAiaLocation('http://www.microsoft.com/pkiops/certs/Microsoft%20Azure%20RSA%20TLS%20Issuing%20CA%2008.crt'),
+        true,
+      );
+      assert.equal(
+        isAllowedAiaLocation('http://WWW.MICROSOFT.COM/pkiops/certs/Microsoft%20Azure%20RSA%20TLS%20Issuing%20CA%2008.crt'),
+        true,
+      );
+      assert.equal(
+        isAllowedAiaLocation('http://cacerts.digicert.com/DigiCertGlobalRootG2.crt'),
+        true,
+      );
+      assert.equal(
+        isAllowedAiaLocation('https://caissuers.microsoft.com/foo.crt'),
+        true,
+      );
+    });
+
+    test('isAllowedAiaLocation rejects untrusted or malformed URLs', async function() {
+      assert.equal(isAllowedAiaLocation('http://169.254.169.254/metadata/attested/document'), false);
+      assert.equal(isAllowedAiaLocation('http://[::1]/cert.crt'), false);
+      assert.equal(isAllowedAiaLocation('http://localhost/cert.crt'), false);
+      assert.equal(isAllowedAiaLocation('http://evil.example/cert.crt'), false);
+      assert.equal(isAllowedAiaLocation('http://user:pass@www.microsoft.com/pkiops/certs/cert.crt'), false);
+      assert.equal(isAllowedAiaLocation('http://www.microsoft.com:444/cert.crt'), false);
+      assert.equal(isAllowedAiaLocation('http://www.microsoft.com/other-path/cert.crt'), false);
+      assert.equal(isAllowedAiaLocation('ftp://www.microsoft.com/cert.crt'), false);
+      assert.equal(isAllowedAiaLocation('not a url'), false);
     });
 
     test('cloneCaStore handles invalid inputs', async function() {
@@ -2485,6 +2575,33 @@ helper.secrets.mockSuite(testing.suiteName(), [], function(mock, skipping) {
           // Restore test fixture
           restoreAllCerts();
           provider.downloadBinaryResponse = oldDownloadBinaryResponse;
+        });
+
+        test('logs rejected intermediate certificate URL', async function() {
+          const workerPool = await makeWorkerPool();
+          const worker = Worker.fromApi({
+            ...defaultWorker,
+          });
+          await worker.create(helper.db);
+
+          removeAllCertsFromStore();
+          const rejectedUrl = 'http://evil.example/cert.crt';
+          const workerIdentityProof = {
+            document: createWorkerIdentityProofWithAiaUrl({ vmId, aiaUrl: rejectedUrl }),
+          };
+
+          await assert.rejects(() =>
+            provider.registerWorker({ workerPool, worker, workerIdentityProof }),
+          /Signature validation error/);
+
+          const log0 = monitor.manager.messages[0];
+          assert.equal(log0.Type, 'registration-rejected-intermediate-certificate-url');
+          assert.equal(log0.Fields.url, rejectedUrl);
+          assert.equal(log0.Fields.workerPoolId, workerPool.workerPoolId);
+          assert.equal(log0.Fields.providerId, providerId);
+          assert.equal(log0.Fields.workerId, worker.workerId);
+
+          restoreAllCerts();
         });
 
         test('bad cert', async function() {

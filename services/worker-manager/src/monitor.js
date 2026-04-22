@@ -226,6 +226,24 @@ MonitorManager.register({
 });
 
 MonitorManager.register({
+  name: 'registrationRejectedIntermediateCertificateUrl',
+  title: 'Registration Rejected Intermediate Certificate URL',
+  type: 'registration-rejected-intermediate-certificate-url',
+  version: 1,
+  level: 'warning',
+  description: `
+    A worker registration attempted to download an intermediate certificate from
+    a URL that is outside the configured AIA allowlist.
+  `,
+  fields: {
+    url: 'The rejected intermediate certificate URL',
+    workerPoolId: 'The worker pool ID',
+    providerId: 'The provider that did the work for this worker pool.',
+    workerId: 'The worker that failed',
+  },
+});
+
+MonitorManager.register({
   name: 'launchConfigSelectorsDebug',
   title: 'Launch Config Selector Debug Information',
   type: 'launch-config-selector-debug',

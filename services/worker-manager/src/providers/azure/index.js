@@ -4,6 +4,7 @@ import taskcluster from '@taskcluster/client';
 import forge from 'node-forge';
 import crypto from 'crypto';
 import got from 'got';
+import net from 'net';
 import { rootCertificates } from 'tls';
 import { WorkerPool, Worker } from '../../data.js';
 import azureApi from './azure-api.js';
@@ -49,6 +50,47 @@ const failProvisioningStates = new Set(['Failed', 'Deleting', 'Canceled', 'Deall
 
 const DEPLOYMENT_METHOD_ARM = 'arm-template';
 const maxInstanceView404Streak = 2;
+// Per Azure Certificate Authority details, these are the HTTP AIA hosts
+// clients may need to reach for Azure certificate chain building.
+// https://learn.microsoft.com/en-us/azure/security/fundamentals/azure-certificate-authority-details?tabs=root-and-subordinate-cas-list
+const allowedAiaLocations = [
+  { hostname: 'cacerts.digicert.com' },
+  { hostname: 'cacerts.digicert.cn' },
+  { hostname: 'cacerts.geotrust.com' },
+  { hostname: 'caissuers.microsoft.com' },
+  { hostname: 'www.microsoft.com', pathPrefix: '/pkiops/certs/' },
+];
+
+export function isAllowedAiaLocation(location) {
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(location);
+  } catch {
+    return false;
+  }
+
+  if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+    return false;
+  }
+
+  if (parsedUrl.username || parsedUrl.password) {
+    return false;
+  }
+
+  if (parsedUrl.port && !['80', '443'].includes(parsedUrl.port)) {
+    return false;
+  }
+
+  // Legitimate Azure AIA endpoints should be DNS names on trusted hosts.
+  if (net.isIP(parsedUrl.hostname) !== 0) {
+    return false;
+  }
+
+  const hostname = parsedUrl.hostname.toLowerCase();
+  return allowedAiaLocations.some(entry =>
+    hostname === entry.hostname &&
+    (!entry.pathPrefix || parsedUrl.pathname.startsWith(entry.pathPrefix)));
+}
 
 export class AzureProvider extends Provider {
 
@@ -1032,7 +1074,16 @@ export class AzureProvider extends Provider {
       for (let i = 0; i < authorityAccessInfo.length; i++) {
         method = authorityAccessInfo[i].method;
         location = authorityAccessInfo[i].location;
-        if (method === 'CA Issuer' && location.startsWith('http:')) {
+        if (method === 'CA Issuer' && !isAllowedAiaLocation(location)) {
+          this.monitor.log.registrationRejectedIntermediateCertificateUrl({
+            url: location,
+            workerPoolId: workerPool.workerPoolId,
+            providerId: this.providerId,
+            workerId: worker.workerId,
+          });
+          continue;
+        }
+        if (method === 'CA Issuer') {
           let raw_data = null;
           try {
             raw_data = await this.downloadBinaryResponse(location);

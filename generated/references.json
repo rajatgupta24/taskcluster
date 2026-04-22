@@ -18729,6 +18729,20 @@
           "version": 1
         },
         {
+          "description": "A worker registration attempted to download an intermediate certificate from\na URL that is outside the configured AIA allowlist.",
+          "fields": {
+            "providerId": "The provider that did the work for this worker pool.",
+            "url": "The rejected intermediate certificate URL",
+            "workerId": "The worker that failed",
+            "workerPoolId": "The worker pool ID"
+          },
+          "level": "warning",
+          "name": "registrationRejectedIntermediateCertificateUrl",
+          "title": "Registration Rejected Intermediate Certificate URL",
+          "type": "registration-rejected-intermediate-certificate-url",
+          "version": 1
+        },
+        {
           "description": "Metrics of a node process.",
           "fields": {
             "lastCpuUsage": "The output of node's process.cpuUsage",
