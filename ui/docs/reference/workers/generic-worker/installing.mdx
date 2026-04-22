@@ -192,6 +192,22 @@ launches generic-worker (set to demand-start) when work is available.
     it manually. Local `workerConfig` values have the lowest precedence and can
     be overridden by the worker pool definition in worker-manager.
 
+    **Permissions:** the runner config may contain credentials such as the
+    static-provider `staticSecret`. The file must be owned by the service
+    account that runs worker-runner, and must not grant access to other
+    principals. The simplest approach is to create the file as the service
+    account and let worker-runner set the DACL on first start:
+
+    ```
+    icacls C:\worker-runner\runner.yml /setowner "%USERNAME%"
+    ```
+
+    If the ACL is looser than owner-only on startup, worker-runner rewrites
+    it to grant full access only to the file's owner and logs a warning.
+    Worker-runner does not attempt to take ownership; if the file is owned
+    by a different user, it refuses to start. Treat the warning as a signal
+    that your provisioning should be fixed.
+
  7. Ensure host 'taskcluster' resolves to localhost by adding the following
     line to `C:\Windows\System32\drivers\etc\hosts`:
 
@@ -313,6 +329,19 @@ starting worker-runner.
     assembles the final generic-worker config file automatically — do not create
     it manually. Local `workerConfig` values have the lowest precedence and can
     be overridden by the worker pool definition in worker-manager.
+
+    **Permissions:** the runner config may contain credentials such as the
+    static-provider `staticSecret`. Restrict it to root so it cannot be read
+    by a running task:
+
+    ```
+    chown root:wheel /etc/generic-worker/runner.yml
+    chmod 0600 /etc/generic-worker/runner.yml
+    ```
+
+    Worker-runner will tighten the permissions on startup if they are looser
+    than owner-only and log a warning; treat the warning as a signal that
+    your provisioning should be fixed.
 
  7. Create the launch daemon plist at
     `/Library/LaunchDaemons/com.mozilla.genericworker.plist`.
@@ -478,6 +507,19 @@ manages the generic-worker process.
     assembles the final generic-worker config file automatically — do not create
     it manually. Local `workerConfig` values have the lowest precedence and can
     be overridden by the worker pool definition in worker-manager.
+
+    **Permissions:** the runner config may contain credentials such as the
+    static-provider `staticSecret`. Restrict it to root so it cannot be read
+    by a running task:
+
+    ```
+    chown root:root /etc/start-worker.yml
+    chmod 0600 /etc/start-worker.yml
+    ```
+
+    Worker-runner will tighten the permissions on startup if they are looser
+    than owner-only and log a warning; treat the warning as a signal that
+    your provisioning should be fixed.
 
 12. Create a systemd service file at `/lib/systemd/system/worker.service`:
 
