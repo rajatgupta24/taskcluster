@@ -1976,33 +1976,38 @@ export class AzureProvider extends Provider {
     debug(`deprovisionResource for ${resourceType} with index ${index}`);
 
     let shouldDelete = false;
-    // lookup resource by name
-    if (!typeData.id) {
-      try {
-        let { provisioningState } = await this._enqueue('query', () => client.get(
-          worker.providerData.resourceGroupName,
-          typeData.name,
-        ));
-        // resource could be successful, failed, etc.
-        // we have not yet tried to delete the resource
-        debug(`found provisioningState ${provisioningState}`);
-        if (!(['Deleting', 'Deallocating', 'Deallocated'].includes(provisioningState))) {
-          shouldDelete = true;
-        }
-      } catch (err) {
-        if (err.statusCode === 404) {
-          debug(`resource ${typeData.name} not found; removing its id and marking as deleted`);
-          await markDeleted();
-          return true;
-        }
-        throw err;
+    // Always look up the resource by name before attempting a delete. The
+    // pre-flight GET catches resources that have already been removed out of
+    // band (e.g. ARM cascade-delete via `deleteOption: 'Delete'`, Spot
+    // preemption, manual cleanup) and lets us mark them deleted without
+    // spending an extra scanner cycle on a no-op beginDelete. It also lets us
+    // skip re-firing beginDelete on a resource already in the Deleting state.
+    try {
+      const { provisioningState } = await this._enqueue('query', () => client.get(
+        worker.providerData.resourceGroupName,
+        typeData.name,
+      ));
+      // resource could be successful, failed, etc.
+      debug(`found provisioningState ${provisioningState}`);
+      if (!(['Deleting', 'Deallocating', 'Deallocated'].includes(provisioningState))) {
+        shouldDelete = true;
       }
+    } catch (err) {
+      if (err.statusCode === 404) {
+        debug(`resource ${typeData.name} not found; removing its id and marking as deleted`);
+        await markDeleted();
+        return true;
+      }
+      throw err;
     }
 
-    // NB: possible resource leak if we don't require `return true`
-    // we don't check operation status: no differentiating between
-    // operation => create and operation => delete
-    if (typeData.id || shouldDelete) {
+    // Callers treat `return false` as "still deleting, keep waiting"; a
+    // missed `markDeleted`/`return true` above would keep the worker stuck
+    // in STOPPING across additional scanner cycles (Azure-side resources
+    // are already gone by this point, so this leaks scanner work, not
+    // Azure state). We do not inspect operation status here since create
+    // vs. delete operations are not distinguished on the resource record.
+    if (shouldDelete) {
       // we need to delete the resource
       debug('deleting resource');
       let deleteRequest;
