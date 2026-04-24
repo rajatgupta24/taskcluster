@@ -4,6 +4,7 @@ const debug = makeDebug('app:queue');
 import assert from 'assert';
 import slugid from 'slugid';
 import taskcluster from '@taskcluster/client';
+import { UNIQUE_VIOLATION } from '@taskcluster/lib-postgres';
 
 /** Get seconds until `target` relative to now (by default).  This rounds up
  * and always waits at least one second, to avoid races in tests where
@@ -208,13 +209,19 @@ export class QueueService {
     debug('Put deadline message to be visible in %s seconds',
       secondsTo(deadline) + delay);
 
-    await this.db.fns.queue_task_deadline_put(
-      taskGroupId,
-      taskId,
-      schedulerId,
-      deadline.toJSON(), // this is to be checked against task record if it didn't change
-      taskcluster.fromNow(`${secondsTo(deadline) + delay} seconds`), // this is slightly after deadline
-    );
+    try {
+      await this.db.fns.queue_task_deadline_put(
+        taskGroupId,
+        taskId,
+        schedulerId,
+        deadline.toJSON(), // this is to be checked against task record if it didn't change
+        taskcluster.fromNow(`${secondsTo(deadline) + delay} seconds`), // this is slightly after deadline
+      );
+    } catch (err) {
+      if (err.code !== UNIQUE_VIOLATION) {
+        throw err;
+      }
+    }
   }
 
   /**
