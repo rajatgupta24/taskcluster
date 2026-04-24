@@ -120,7 +120,7 @@ export class TaskCreator {
 
       if (!task) {
         this.monitor.count(`fire.${context.firedBy}.declined`);
-        return { response: {}, declined: true };
+        return { declined: true };
       }
       this.monitor.count(`fire.${context.firedBy}.created`);
 
