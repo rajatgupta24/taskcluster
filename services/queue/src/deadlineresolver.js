@@ -131,7 +131,14 @@ class DeadlineResolver {
       return remove();
     }
 
-    task.updateStatusWith(await this.db.fns.cancel_task(taskId, 'deadline-exceeded'));
+    const updated = task.updateStatusWith(
+      await this.db.fns.cancel_task(taskId, 'deadline-exceeded'),
+    );
+
+    if (!updated) {
+      debug('No cancellation run created for taskId: %s; task was already resolved', taskId);
+      return remove();
+    }
 
     // Check if the last run was resolved here (or possibly by a previous
     // attempt to process this message)

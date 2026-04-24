@@ -386,7 +386,6 @@ suite(testing.suiteName(), function() {
     helper.dbTest('getting tasks from the deadline queue', async function (db) {
       await db.fns.queue_task_deadline_put('tg1', 't1', 's1', fromNow('-20 seconds'), fromNow('-20 seconds'));
       await db.fns.queue_task_deadline_put('tg2', 't2', 's2', fromNow('-20 seconds'), fromNow('-20 seconds'));
-      await db.fns.queue_task_deadline_put('tg2', 't2', 's2', fromNow('120 seconds'), fromNow('120 seconds'));
       const result = await db.fns.queue_task_deadline_get(fromNow('10 seconds'), 2);
       assert.deepEqual(result.map(({ task_id }) => task_id), ['t1', 't2']);
 
