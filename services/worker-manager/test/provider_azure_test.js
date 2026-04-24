@@ -1879,11 +1879,12 @@ helper.secrets.mockSuite(testing.suiteName(), [], function(mock, skipping) {
       assert.deepEqual(await fake.computeClient.disks.getFakeRequestParameters('rgrp', diskName), {});
     });
 
-    test('beginDelete 404 is treated as already-deleted (ghost worker reaps)', async function() {
-      // Seed the worker with ids for every resource so deprovision goes down
-      // the beginDelete branch, then remove the backing fakes to simulate
-      // Azure having already deleted them out-of-band (Spot preemption,
-      // ARM cascade delete, manual cleanup, etc.).
+    test('beginDelete 404 race between pre-flight GET and DELETE is handled', async function() {
+      // Defense-in-depth for the narrow race where the pre-flight GET sees
+      // the resource but it is deleted by another actor before our DELETE
+      // lands. Azure's REST contract uses 204 (not 404) for an idempotent
+      // DELETE of a missing resource, but keep the 404 handler so a race,
+      // proxy difference, or SDK quirk still lets the worker progress.
       await makeResource('ip', true);
       await makeResource('nic', true);
       await makeResource('disks', true, 0);
@@ -1895,24 +1896,30 @@ helper.secrets.mockSuite(testing.suiteName(), [], function(mock, skipping) {
 
       await provider.removeWorker({ worker, reason: 'test' });
 
-      // remove backing resources so beginDelete throws 404 for each
-      fake.computeClient.virtualMachines.removeFakeResource('rgrp', vmName);
-      fake.networkClient.networkInterfaces.removeFakeResource('rgrp', nicName);
-      fake.networkClient.publicIPAddresses.removeFakeResource('rgrp', ipName);
-      fake.computeClient.disks.removeFakeResource('rgrp', 'disks0');
-      fake.computeClient.disks.removeFakeResource('rgrp', 'disks1');
+      // Resources still exist (GET succeeds) but every beginDelete throws 404
+      // as if the resource disappeared between our GET and DELETE.
+      const localSandbox = sinon.createSandbox({});
+      const throw404 = async () => {
+        const err = new Error('not found');
+        err.statusCode = 404;
+        throw err;
+      };
+      localSandbox.stub(fake.computeClient.virtualMachines, 'beginDelete').callsFake(throw404);
+      localSandbox.stub(fake.networkClient.networkInterfaces, 'beginDelete').callsFake(throw404);
+      localSandbox.stub(fake.networkClient.publicIPAddresses, 'beginDelete').callsFake(throw404);
+      localSandbox.stub(fake.computeClient.disks, 'beginDelete').callsFake(throw404);
 
-      // reset errors so we can assert no deletion-error is recorded
       provider.errors = provider.errors || {};
       provider.errors[workerPoolId] = [];
 
-      // drive the reap loop. Each call advances one resource (VM -> NIC -> IP -> disks).
-      for (let i = 0; i < 6; i++) {
+      try {
         await provider.deprovisionResources({ worker, monitor });
+      } finally {
+        localSandbox.restore();
       }
 
       const [reloaded] = await helper.getWorkers();
-      assert.equal(reloaded.state, 'stopped', 'ghost worker should progress to stopped');
+      assert.equal(reloaded.state, 'stopped', 'worker should reach stopped via the beginDelete-404 fallback');
       assert.equal(reloaded.providerData.vm.deleted, true);
       assert.equal(reloaded.providerData.nic.deleted, true);
       assert.equal(reloaded.providerData.ip.deleted, true);
@@ -1927,6 +1934,113 @@ helper.secrets.mockSuite(testing.suiteName(), [], function(mock, skipping) {
         'no deletion-error should be recorded for out-of-band deletions');
       helper.assertPulseMessage('worker-stopped', m => m.payload.workerId === reloaded.workerId);
     });
+
+    test('pre-flight GET 404 reaps ghost resources in a single cycle (issue #8526)', async function() {
+      // Seed the worker with ids so typeData.id is truthy for each resource -
+      // this is the state produced by a normal provision/run. Then simulate
+      // ARM cascade-delete (deleteOption: 'Delete' on the VM) having already
+      // removed every child resource before the scanner arrives.
+      await makeResource('ip', true);
+      await makeResource('nic', true);
+      await makeResource('disks', true, 0);
+      await makeResource('disks', true, 1);
+      await makeResource('vm', true);
+      await worker.update(helper.db, worker => {
+        worker.state = 'running';
+      });
+
+      await provider.removeWorker({ worker, reason: 'test' });
+
+      fake.computeClient.virtualMachines.removeFakeResource('rgrp', vmName);
+      fake.networkClient.networkInterfaces.removeFakeResource('rgrp', nicName);
+      fake.networkClient.publicIPAddresses.removeFakeResource('rgrp', ipName);
+      fake.computeClient.disks.removeFakeResource('rgrp', 'disks0');
+      fake.computeClient.disks.removeFakeResource('rgrp', 'disks1');
+
+      // Simulate production Azure DELETE semantics (per Microsoft API
+      // guidelines: DELETE of a missing resource returns 204, not 404). The
+      // test fake throws 404 from beginDelete, which masks the bug; override
+      // it with a silent-success poller so beginDelete looks idempotent the
+      // way real ARM does. If the pre-flight GET is skipped, deprovision will
+      // call beginDelete, set id=false, and stall - only marking the resource
+      // deleted on the next cycle.
+      const localSandbox = sinon.createSandbox({});
+      const silentDelete = async () => ({
+        getOperationState: () => ({ status: 'Complete', config: {} }),
+      });
+      const beginDeleteStubs = [
+        localSandbox.stub(fake.computeClient.virtualMachines, 'beginDelete').callsFake(silentDelete),
+        localSandbox.stub(fake.networkClient.networkInterfaces, 'beginDelete').callsFake(silentDelete),
+        localSandbox.stub(fake.networkClient.publicIPAddresses, 'beginDelete').callsFake(silentDelete),
+        localSandbox.stub(fake.computeClient.disks, 'beginDelete').callsFake(silentDelete),
+      ];
+
+      provider.errors = provider.errors || {};
+      provider.errors[workerPoolId] = [];
+
+      try {
+        await provider.deprovisionResources({ worker, monitor });
+      } finally {
+        localSandbox.restore();
+      }
+
+      const [reloaded] = await helper.getWorkers();
+      assert.equal(reloaded.state, 'stopped',
+        'ghost worker should stop in a single deprovisionResources call');
+      assert.equal(reloaded.providerData.vm.deleted, true);
+      assert.equal(reloaded.providerData.nic.deleted, true);
+      assert.equal(reloaded.providerData.ip.deleted, true);
+      assert.equal(reloaded.providerData.disks[0].deleted, true);
+      assert.equal(reloaded.providerData.disks[1].deleted, true);
+      for (const stub of beginDeleteStubs) {
+        assert.equal(stub.callCount, 0,
+          'beginDelete must not fire when the pre-flight GET already returns 404');
+      }
+      assert.deepEqual(provider.errors[workerPoolId], []);
+      helper.assertPulseMessage('worker-stopped', m => m.payload.workerId === reloaded.workerId);
+    });
+
+    for (const midDeleteState of ['Deleting', 'Deallocating', 'Deallocated']) {
+      test(`pre-flight GET finds ${midDeleteState}; beginDelete is not re-fired even when typeData.id is truthy`, async function() {
+        // When the VM is already in one of the mid-delete states, the old
+        // code's `if (typeData.id || shouldDelete)` gate would re-fire
+        // beginDelete against it. The fix gates solely on shouldDelete, so
+        // we should sit tight and wait for the delete that is already in
+        // flight.
+        await makeResource('ip', true);
+        await makeResource('nic', true);
+        await makeResource('disks', true, 0);
+        await makeResource('vm', true);
+        fake.computeClient.virtualMachines.modifyFakeResource('rgrp', vmName, res => {
+          res.provisioningState = midDeleteState;
+        });
+        await worker.update(helper.db, worker => {
+          worker.state = 'running';
+        });
+
+        await provider.removeWorker({ worker, reason: 'test' });
+
+        const localSandbox = sinon.createSandbox({});
+        const beginDeleteStub = localSandbox.stub(fake.computeClient.virtualMachines, 'beginDelete');
+
+        try {
+          await provider.deprovisionResources({ worker, monitor });
+        } finally {
+          localSandbox.restore();
+        }
+
+        assert.equal(beginDeleteStub.callCount, 0,
+          `beginDelete must not fire while the VM is in ${midDeleteState} state`);
+
+        const [reloaded] = await helper.getWorkers();
+        assert.equal(reloaded.state, 'stopping',
+          'worker should remain in STOPPING while the VM is still mid-delete');
+        assert.equal(reloaded.providerData.vm.id, `id/${vmName}`,
+          'typeData.id should be preserved; we have not fired our own delete');
+        assert.notEqual(reloaded.providerData.vm.deleted, true,
+          'vm should not be marked deleted until a subsequent GET sees 404');
+      });
+    }
   });
 
   suite('deprovision', function () {
