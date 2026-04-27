@@ -3,6 +3,62 @@
 <!-- `yarn release` will insert the existing changelog snippets here: -->
 <!-- NEXT RELEASE HERE -->
 
+## v99.2.0
+
+### DEPLOYERS
+
+▶ [minor] [#8243](https://github.com/taskcluster/taskcluster/issues/8243)
+Add optional [Kubernetes Gateway API](https://gateway-api.sigs.k8s.io/) support (`Gateway`, `HTTPRoute`, `HealthCheckPolicy`) as an alternative to the existing `Ingress` resource. These new resources are only rendered when `ingressType: gateway` is set in Helm values, so existing Ingress-based deployments are unaffected and no new CRDs or `skipResourceTypes` entries are required.
+
+To adopt Gateway API for traffic routing, set `ingressType: gateway` along with `gatewayClassName`, and for GKE regional external ALBs, `gatewayStaticIpName` and `gcpManagedCertName`. Both `Ingress` and Gateway API resources will be rendered side-by-side, letting you migrate at your own pace; add `ingress` to `skipResourceTypes` once the Gateway setup is validated to stop rendering the legacy Ingress.
+
+See the [Gateway API section of the dev deployment docs](https://github.com/taskcluster/taskcluster/blob/main/dev-docs/dev-deployment.md#gateway-api) for setup instructions.
+
+▶ [patch] [#8526](https://github.com/taskcluster/taskcluster/issues/8526)
+Fixed the Azure provider's `deprovisionResource` wasting a worker-scanner cycle per resource when the backing VM/NIC/IP/disk had already been removed out-of-band (e.g. ARM cascade-delete via `deleteOption: 'Delete'`, Spot preemption). Previously the pre-flight `GET` was skipped whenever the worker still had a stored `id`, so the scanner fired a no-op `beginDelete` first and only discovered the resource was gone on the following cycle. The helper now always performs the pre-flight `GET`, so a missing resource is marked deleted immediately and the reap chain continues in a single cycle, shortening the `STOPPING` tail for affected Azure pools.
+
+▶ [patch]
+The default `sendDeadline` for the pulse publisher has been raised from 12 seconds to 30 seconds. Under load, RabbitMQ blocking and client reconnects could consume most of the 12-second budget before a single publish-confirm round-trip completed, causing cascading `PulsePublisher.sendDeadline exceeded` errors. The new default gives more headroom while still remaining below typical HTTP proxy timeouts. Services can override this per-publisher via the `sendDeadline` option to `exchanges.publisher()`.
+
+▶ [patch] [bug 2028956](http://bugzil.la/2028956)
+Worker Manager's Azure registration flow now restricts intermediate certificate downloads to trusted certificate distribution endpoints and records rejected certificate URLs in service logs.
+
+### WORKER-DEPLOYERS
+
+▶ [patch] [bug 2032277](http://bugzil.la/2032277)
+worker-runner now tightens the permissions of its configuration file (typically `runner.yml` / `worker-runner.json`) to be readable only by its owner before reading it, and logs a warning if the file was previously group- or world-readable. This closes an exposure where a task running on a worker using the `static` provider could read the `staticSecret` out of a loosely-permissioned runner config and impersonate the worker via `registerWorker`. Worker deployers using the static provider should update their provisioning so the runner config is created with mode `0600` (or the equivalent owner-only ACL on Windows) from the start.
+
+### USERS
+
+▶ [patch] [#8534](https://github.com/taskcluster/taskcluster/issues/8534)
+Fix a 500 raised from hooks.triggerHook when a hook's task template evaluates
+to nothing. The endpoint now correctly replies with an empty object in that
+case.
+
+▶ [patch] [#8529](https://github.com/taskcluster/taskcluster/issues/8529)
+Fix a bug in `queue.createTask` where idempotent retries could insert multiple
+rows into the `queue_task_deadlines` table for a single task. Once those
+duplicates became visible, several deadline-resolver instances could pick up
+the same task concurrently, the first cancelled it, and the others crashed
+because they assumed they were the only one working on the cancellation of said
+task. A new unique constraint on `task_id` now prevents duplicate deadline
+rows, and the migration deduplicates any existing stale rows.
+
+### OTHER
+
+▶ Additional changes not described here: [#3684](https://github.com/taskcluster/taskcluster/issues/3684), [#8540](https://github.com/taskcluster/taskcluster/issues/8540).
+
+### Automated Package Updates
+
+<details>
+<summary>3 Dependabot updates</summary>
+
+* build(deps): bump postcss from 8.5.6 to 8.5.10 (97fbba720e)
+* build(deps): bump rustls-webpki in /clients/client-rust (ae9c06296e)
+* build(deps): bump uuid from 9.0.1 to 14.0.0 (0770b27dad)
+
+</details>
+
 ## v99.1.1
 
 ### GENERAL
