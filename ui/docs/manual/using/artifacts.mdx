@@ -17,7 +17,7 @@ in Generic Worker task payloads using the `logs.live` property and the
 Workers also generally provide a way to specify, in the task description, the
 files and directories that should be uploaded as artifacts after the task
 completes. For a worker running
-[Generic-Worker](/docs/reference/workers/generic-worker/docs/payload), that looks like
+[Generic-Worker](/docs/reference/workers/generic-worker), that looks like
 
 ```yaml
 artifacts:
@@ -26,8 +26,8 @@ artifacts:
     type: directory
 ```
 
-Tor a worker running
-[Docker-Worker](/docs/reference/workers/docker-worker/docs/payload), the format is
+For a worker running
+[Docker-Worker](/docs/reference/workers/docker-worker/payload), the format is
 slightly different:
 
 ```yaml
