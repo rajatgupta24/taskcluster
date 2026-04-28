@@ -1,9 +1,9 @@
 import fs from 'fs';
 import { promisify } from 'util';
-import child_process from 'child_process';
+import { spawn, execFile } from 'child_process';
 import { Transform } from 'stream';
 
-const execCommandNative = promisify(child_process.exec);
+const execFileAsync = promisify(execFile);
 
 /**
  * Run a command and display its output.
@@ -25,7 +25,7 @@ export const execCommand = async ({
   env = process.env,
   ignoreReturn = false,
 }) => {
-  const cp = child_process.spawn(command[0], command.slice(1), {
+  const cp = spawn(command[0], command.slice(1), {
     cwd: dir,
     env,
     stdio: [stdin ? 'pipe' : 'ignore', 'pipe', 'pipe'],
@@ -112,7 +112,7 @@ export const execCommand = async ({
 export const checkExecutableExists = async (executable) => {
   const command = process.platform === 'win32' ? 'where' : 'which';
   try {
-    await execCommandNative(`${command} ${executable}`);
+    await execFileAsync(command, [executable]);
     return true;
   } catch (error) {
     return false;
