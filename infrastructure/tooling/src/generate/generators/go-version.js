@@ -26,7 +26,8 @@ export const tasks = [{
         throw new Error(`Cannot find \`go\`.  ${errmsg}`);
       }
     }
-    if (version !== goVersion) {
+    const versionPrefix = version?.match(/^go[0-9]+\.[0-9]+\.[0-9]+/)?.[0];
+    if (versionPrefix !== goVersion) {
       throw new Error(`Found ${version}.  ${errmsg}`);
     }
 
