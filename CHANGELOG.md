@@ -3,6 +3,27 @@
 <!-- `yarn release` will insert the existing changelog snippets here: -->
 <!-- NEXT RELEASE HERE -->
 
+## v99.2.1
+
+### GENERAL
+
+▶ [patch] [#8525](https://github.com/taskcluster/taskcluster/issues/8525)
+Fix two related races that could leave a Taskcluster task in an inconsistent state when a Pulse publish failed during task creation or a run state transition:
+
+- A run could transition to `pending` in `tasks.runs` without a corresponding `queue_pending_tasks` row, making the task invisible to workers and to the "pending tasks" UI/API counts. Transitions of a run to `pending` (`schedule_task`, `rerun_task`, `resolve_task`, `check_task_claim`) now commit the `queue_pending_tasks` row in the same database transaction as the `tasks.runs` update.
+- A task could be inserted into `tasks` without a corresponding `queue_task_deadlines` row, leaving it untracked by the deadline resolver. `createTask` now inserts both rows atomically inside `create_task_atomic`.
+
+In the queue's HTTP API handlers (`createTask`, `scheduleTask`, `rerunTask`, `reportException`), Pulse `taskPending` / `taskException` / `taskDefined` publishes that follow these now-atomic DB commits are best-effort: the database is the source of truth, so a Pulse publish failure no longer fails the operation. Consumers that need exact-once notification should treat Pulse as advisory and read `queue.task(taskId).status` for the authoritative state. Background resolvers (`claim-resolver`, `worker-removed-resolver`, `dependency-resolver`) preserve their pre-existing at-least-once publish semantics by continuing to fail the handler on Pulse error so redelivery re-attempts the publish.
+
+### USERS
+
+▶ [patch]
+Update sha2 dependency in the rust client
+
+### OTHER
+
+▶ Additional changes not described here: [bug 2035431](http://bugzil.la/2035431), [#5457](https://github.com/taskcluster/taskcluster/issues/5457).
+
 ## v99.2.0
 
 ### DEPLOYERS
