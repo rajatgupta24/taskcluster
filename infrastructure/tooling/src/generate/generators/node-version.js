@@ -28,20 +28,20 @@ tasks.push({
         /^( *node: ')[0-9.]+(')$/m,
         `$1${nodeVersion}$2`));
 
-    [
+    for (const file of [
       'Dockerfile',
       'workers/docker-worker/test/images/test/Dockerfile',
       'ui/Dockerfile',
       'taskcluster/docker/browser-test/Dockerfile',
       'taskcluster/docker/ci/Dockerfile',
       'taskcluster/docker/rabbit-test/Dockerfile',
-    ].forEach(async file => {
+    ]) {
       utils.status({ message: file });
       await modifyRepoFile(file,
         contents => contents.replace(
           /^FROM node:[0-9.]+(.*)$/gm,
           `FROM node:${nodeVersion}$1`));
-    });
+    }
 
     utils.status({ message: '.nvmrc' });
     await writeRepoFile('.nvmrc', nodeVersion + '\n');
@@ -58,19 +58,19 @@ tasks.push({
         /^( *NODE_VERSION *= *")[0-9.]+(")$/m,
         `$1${nodeVersion}$2`));
 
-    [
+    for (const file of [
       'ui/package.json',
       'workers/docker-worker/package.json',
       'clients/client/package.json',
       'clients/client-test/package.json',
-    ].forEach(async file => {
+    ]) {
       utils.status({ message: file });
       await modifyRepoJSON(file,
         contents => {
           contents.engines.node = nodeVersion;
           return contents;
         });
-    });
+    }
 
     utils.status({ message: 'cloudbuild.yaml' });
     await modifyRepoYAML('cloudbuild.yaml',
@@ -95,16 +95,16 @@ tasks.push({
     }
     utils.step({ title: `Setting yarn version ${yarnVersion}` });
 
-    [
+    for (const file of [
       'ui/package.json',
       'workers/docker-worker/package.json',
-    ].forEach(file => {
+    ]) {
       utils.status({ message: file });
-      modifyRepoJSON(file,
+      await modifyRepoJSON(file,
         contents => {
           contents.packageManager = yarnVersion;
           return contents;
         });
-    });
+    }
   },
 });
