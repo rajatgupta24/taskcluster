@@ -305,16 +305,6 @@ const payloadCommand = [
 ];
 
 export const TASK_PAYLOAD_SCHEMAS = {
-  'docker-worker': {
-    label: 'Docker worker',
-    type: 'docker-worker',
-    schema: 'v1/payload.json',
-    samplePayload: {
-      image: 'ubuntu:latest',
-      command: payloadCommand,
-      maxRunTime: 60 + 30,
-    },
-  },
   'generic-insecure-posix': {
     label: 'Generic worker insecure posix',
     type: 'generic-worker',

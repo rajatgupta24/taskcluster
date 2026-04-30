@@ -53,10 +53,10 @@ const tutorialWorkerPoolId =
   window.env.SITE_SPECIFIC.tutorial_worker_pool_id ||
   'proj-getting-started/tutorial';
 const tutorialWorkerSchema =
-  window.env.SITE_SPECIFIC.tutorial_worker_schema || 'docker-worker';
+  window.env.SITE_SPECIFIC.tutorial_worker_schema || 'generic-multi-posix';
 const defaultTask = schema => {
   const schemaDefinition =
-    TASK_PAYLOAD_SCHEMAS[schema] || TASK_PAYLOAD_SCHEMAS['docker-worker'];
+    TASK_PAYLOAD_SCHEMAS[schema] || TASK_PAYLOAD_SCHEMAS['generic-multi-posix'];
 
   return {
     taskQueueId: tutorialWorkerPoolId,
