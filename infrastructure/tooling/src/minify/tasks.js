@@ -79,18 +79,6 @@ const IGNORE = {
     'url-parse',
     'ws',
   ].includes(pkg),
-  'workers/docker-worker/yarn.lock': pkg => [
-    'brace-expansion',
-    'chownr',
-    'end-of-stream',
-    'glob',
-    'inherits',
-    'ipaddr.js',
-    'mime-types',
-    'minimatch',
-    'safe-buffer',
-    'which',
-  ].includes(pkg),
 };
 
 export const getTasks = async () => {

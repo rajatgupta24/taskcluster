@@ -30,7 +30,6 @@ tasks.push({
 
     for (const file of [
       'Dockerfile',
-      'workers/docker-worker/test/images/test/Dockerfile',
       'ui/Dockerfile',
       'taskcluster/docker/browser-test/Dockerfile',
       'taskcluster/docker/ci/Dockerfile',
@@ -60,7 +59,6 @@ tasks.push({
 
     for (const file of [
       'ui/package.json',
-      'workers/docker-worker/package.json',
       'clients/client/package.json',
       'clients/client-test/package.json',
     ]) {
@@ -97,7 +95,6 @@ tasks.push({
 
     for (const file of [
       'ui/package.json',
-      'workers/docker-worker/package.json',
     ]) {
       utils.status({ message: file });
       await modifyRepoJSON(file,

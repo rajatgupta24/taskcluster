@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/taskcluster/taskcluster/v99/tools/worker-runner/cfg"
-	"github.com/taskcluster/taskcluster/v99/tools/worker-runner/worker/dockerworker"
 	"github.com/taskcluster/taskcluster/v99/tools/worker-runner/worker/dummy"
 	"github.com/taskcluster/taskcluster/v99/tools/worker-runner/worker/genericworker"
 	"github.com/taskcluster/taskcluster/v99/tools/worker-runner/worker/worker"
@@ -19,7 +18,6 @@ type workerInfo struct {
 
 var workers map[string]workerInfo = map[string]workerInfo{
 	"dummy":          workerInfo{dummy.New, dummy.Usage},
-	"docker-worker":  workerInfo{dockerworker.New, dockerworker.Usage},
 	"generic-worker": workerInfo{genericworker.New, genericworker.Usage},
 }
 
