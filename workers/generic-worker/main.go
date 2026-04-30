@@ -5,7 +5,6 @@
 //go:generate go run ./gw-codegen file://schemas/multiuser_posix.yml    generated_multiuser_linux.go     multiuser
 //go:generate go run ./gw-codegen file://schemas/multiuser_posix.yml    generated_multiuser_freebsd.go   multiuser
 //go:generate go run ./gw-codegen file://schemas/multiuser_windows.yml  generated_multiuser_windows.go   multiuser
-// //go:generate go run ./gw-codegen file://../docker-worker/schemas/v1/payload.yml dockerworker/payload.go
 
 package main
 
