@@ -9,6 +9,8 @@ import { dnToString, getAuthorityAccessInfo, getCertFingerprint, cloneCaStore } 
 import testing from '@taskcluster/lib-testing';
 import forge from 'node-forge';
 import fs from 'fs';
+import http from 'http';
+import got from 'got';
 import path from 'path';
 import { WorkerPool, Worker, WorkerPoolStats } from '../src/data.js';
 import Debug from 'debug';
@@ -2620,8 +2622,17 @@ helper.secrets.mockSuite(testing.suiteName(), [], function(mock, skipping) {
           await worker.create(helper.db);
           const workerIdentityProof = { document: azureSignatures[0].document };
 
-          const oldDownloadTimeout = provider.downloadTimeout;
-          provider.downloadTimeout = 1; // 1 millisecond
+          const slowServer = http.createServer(() => {});
+          await new Promise(resolve => slowServer.listen(0, '127.0.0.1', resolve));
+          const slowUrl = `http://127.0.0.1:${slowServer.address().port}`;
+
+          const oldDownloadBinaryResponse = provider.downloadBinaryResponse;
+          provider.downloadBinaryResponse = async () => got(slowUrl, {
+            responseType: 'buffer',
+            resolveBodyOnly: true,
+            timeout: { request: 1 },
+            retry: { limit: 0 },
+          });
 
           removeAllCertsFromStore();
           const intermediateCert = getIntermediateCert();
@@ -2644,8 +2655,9 @@ helper.secrets.mockSuite(testing.suiteName(), [], function(mock, skipping) {
             `Certificate "${expectedSubject}"; AuthorityAccessInfo ${expectedAIA}`);
 
           // Restore test fixture
+          await new Promise(resolve => slowServer.close(resolve));
           restoreAllCerts();
-          provider.downloadTimeout = oldDownloadTimeout;
+          provider.downloadBinaryResponse = oldDownloadBinaryResponse;
           helper.assertNoPulseMessage('worker-running');
         });
 
