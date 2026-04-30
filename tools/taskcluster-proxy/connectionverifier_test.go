@@ -114,23 +114,89 @@ func TestErrUnauthorizedConnectionMessage(t *testing.T) {
 }
 
 func TestNewConnectionVerifierEmptyUsername(t *testing.T) {
-	v, err := newConnectionVerifier("")
+	v, err := newConnectionVerifier("", nil)
 	require.NoError(t, err)
 	_, ok := v.(*noopVerifier)
-	assert.True(t, ok, "empty username should return noopVerifier")
+	assert.True(t, ok, "empty username and no allowed-network should return noopVerifier")
 }
 
 func TestNewConnectionVerifierCurrentUser(t *testing.T) {
 	// Use current user so the lookup succeeds on any platform
-	v, err := newConnectionVerifier(currentUsername(t))
+	v, err := newConnectionVerifier(currentUsername(t), nil)
 	require.NoError(t, err)
 	assert.NotNil(t, v)
 }
 
 func TestNewConnectionVerifierBadUsername(t *testing.T) {
-	_, err := newConnectionVerifier("nonexistent-user-abc123xyz")
+	_, err := newConnectionVerifier("nonexistent-user-abc123xyz", nil)
 	require.Error(t, err)
 }
+
+func TestNewConnectionVerifierWithAllowedNetwork(t *testing.T) {
+	_, cidr, err := net.ParseCIDR("172.18.0.0/16")
+	require.NoError(t, err)
+	v, err := newConnectionVerifier(currentUsername(t), cidr)
+	require.NoError(t, err)
+	_, ok := v.(*networkAdmittingVerifier)
+	assert.True(t, ok, "non-nil allowed-network should wrap with networkAdmittingVerifier")
+}
+
+// fakeUIDVerifier returns the given error from Verify, so tests can drive
+// networkAdmittingVerifier through both branches without doing real OS
+// peer-credential lookups.
+type fakeUIDVerifier struct{ err error }
+
+func (f *fakeUIDVerifier) Verify(_ net.Conn) error { return f.err }
+
+func TestNetworkAdmittingVerifier_AdmitsOnPeerNotFoundInsideCIDR(t *testing.T) {
+	_, cidr, err := net.ParseCIDR("172.18.0.0/16")
+	require.NoError(t, err)
+	v := &networkAdmittingVerifier{
+		inner:          &fakeUIDVerifier{err: errPeerNotFound},
+		allowedNetwork: cidr,
+	}
+	conn := &fakeRemoteAddrConn{remote: &net.TCPAddr{IP: net.IPv4(172, 18, 0, 5), Port: 1234}}
+	require.NoError(t, v.Verify(conn))
+}
+
+func TestNetworkAdmittingVerifier_RejectsOnPeerNotFoundOutsideCIDR(t *testing.T) {
+	_, cidr, err := net.ParseCIDR("172.18.0.0/16")
+	require.NoError(t, err)
+	v := &networkAdmittingVerifier{
+		inner:          &fakeUIDVerifier{err: errPeerNotFound},
+		allowedNetwork: cidr,
+	}
+	conn := &fakeRemoteAddrConn{remote: &net.TCPAddr{IP: net.IPv4(10, 0, 0, 5), Port: 1234}}
+	require.Error(t, v.Verify(conn))
+}
+
+func TestNetworkAdmittingVerifier_DoesNotMaskUIDMismatch(t *testing.T) {
+	// A genuine UID-mismatch error must NOT be admitted by the network
+	// fallback even if the remote IP is in the allowed CIDR — otherwise
+	// a host process from a sibling task would be admitted just because
+	// its source IP happened to be inside the docker subnet.
+	_, cidr, err := net.ParseCIDR("172.18.0.0/16")
+	require.NoError(t, err)
+	v := &networkAdmittingVerifier{
+		inner: &fakeUIDVerifier{err: &ErrUnauthorizedConnection{
+			ExpectedUser: "task-user",
+			ActualUID:    "1234",
+			RemoteAddr:   "172.18.0.5:1234",
+		}},
+		allowedNetwork: cidr,
+	}
+	conn := &fakeRemoteAddrConn{remote: &net.TCPAddr{IP: net.IPv4(172, 18, 0, 5), Port: 1234}}
+	require.Error(t, v.Verify(conn))
+}
+
+// fakeRemoteAddrConn is a minimal net.Conn whose only meaningful method is
+// RemoteAddr; the verifiers under test only ever read that.
+type fakeRemoteAddrConn struct {
+	net.Conn
+	remote net.Addr
+}
+
+func (f *fakeRemoteAddrConn) RemoteAddr() net.Addr { return f.remote }
 
 func currentUsername(t *testing.T) string {
 	t.Helper()

@@ -205,19 +205,21 @@ func (dtf *D2GTaskFeature) Start() *CommandExecutionError {
 	if isImageArtifact {
 		if image == nil {
 			var loadErr *CommandExecutionError
-			image, loadedImage, loadErr = dtf.loadImageArtifactLocked(key, loadImage)
+			image, loadedImage, loadErr = dtf.loadImageLocked(key, loadImage)
 			if loadErr != nil {
 				return loadErr
 			}
 		}
 	} else {
+		// Registry pulls also serialize through the same mutex so that
+		// concurrent tasks running with the same `image: foo:tag`
+		// don't issue parallel `docker pull`s and race on the cache
+		// JSON write below.
 		var loadErr *CommandExecutionError
-		image, loadErr = loadImage()
+		image, loadedImage, loadErr = dtf.loadImageLocked(key, loadImage)
 		if loadErr != nil {
 			return loadErr
 		}
-		dtf.imageCache[key] = image
-		loadedImage = true
 	}
 
 	if loadedImage {
@@ -290,9 +292,11 @@ func (dtf *D2GTaskFeature) Start() *CommandExecutionError {
 	return nil
 }
 
-// loadImageArtifactLocked serializes docker image artifact loads so that
-// concurrent tasks don't race on tag -> ID resolution.
-func (dtf *D2GTaskFeature) loadImageArtifactLocked(key string, loadImage func() (*Image, *CommandExecutionError)) (*Image, bool, *CommandExecutionError) {
+// loadImageLocked serializes docker image loads (both artifact-based
+// `docker load` and registry-based `docker pull`) so that concurrent
+// tasks sharing the same image key don't issue redundant work and
+// don't race on the on-disk cache JSON write.
+func (dtf *D2GTaskFeature) loadImageLocked(key string, loadImage func() (*Image, *CommandExecutionError)) (*Image, bool, *CommandExecutionError) {
 	d2gImageLoadMutex.Lock()
 	defer d2gImageLoadMutex.Unlock()
 

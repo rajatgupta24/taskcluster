@@ -20,31 +20,41 @@ const (
 // Each task gets a block of ports based on the configured base ports.
 type PortManager struct {
 	sync.Mutex
-	allocated       map[string][]uint16 // taskID -> allocated ports
-	slots           map[string]uint8    // taskID -> slot index
-	usedSlots       map[uint8]bool      // slot index -> in use
-	liveLogBase     uint16
-	interactiveBase uint16
-	proxyBase       uint16
-	capacity        uint8
+	allocated         map[string][]uint16 // taskID -> allocated ports
+	slots             map[string]uint8    // taskID -> slot index
+	usedSlots         map[uint8]bool      // slot index -> in use
+	liveLogBase       uint16
+	interactiveBase   uint16
+	proxyBase         uint16
+	enableLiveLog     bool
+	enableInteractive bool
+	enableProxy       bool
+	capacity          uint8
 }
 
 // NewPortManager creates a new PortManager.
-// basePort is used to calculate dynamic ports for each task slot.
-func NewPortManager(liveLogBase, interactiveBase, proxyBase uint16, capacity uint8) *PortManager {
+// The base ports and enable* flags must match the worker config; ports
+// for disabled features are returned as 0 to match the validator's
+// behavior (which also skips overlap checks for disabled features).
+func NewPortManager(c *gwconfig.PublicConfig) *PortManager {
 	return &PortManager{
-		allocated:       make(map[string][]uint16),
-		slots:           make(map[string]uint8),
-		usedSlots:       make(map[uint8]bool),
-		liveLogBase:     liveLogBase,
-		interactiveBase: interactiveBase,
-		proxyBase:       proxyBase,
-		capacity:        capacity,
+		allocated:         make(map[string][]uint16),
+		slots:             make(map[string]uint8),
+		usedSlots:         make(map[uint8]bool),
+		liveLogBase:       c.LiveLogPortBase,
+		interactiveBase:   c.InteractivePort,
+		proxyBase:         c.TaskclusterProxyPort,
+		enableLiveLog:     c.EnableLiveLog,
+		enableInteractive: c.EnableInteractive,
+		enableProxy:       c.EnableTaskclusterProxy,
+		capacity:          c.Capacity,
 	}
 }
 
 // AllocatePorts allocates a block of ports for a task.
 // Returns the allocated ports or an error if no slots are available.
+// Disabled features get 0 in their slot — callers should consult the
+// corresponding Enable* config flag before using a port.
 func (pm *PortManager) AllocatePorts(taskID string) ([]uint16, error) {
 	pm.Lock()
 	defer pm.Unlock()
@@ -60,13 +70,17 @@ func (pm *PortManager) AllocatePorts(taskID string) ([]uint16, error) {
 		return nil, fmt.Errorf("no available port slots (capacity=%d, allocated=%d)", pm.capacity, len(pm.allocated))
 	}
 
-	// Calculate ports for this slot
 	offset := uint16(slot) * uint16(gwconfig.PortsPerTask)
-	ports := []uint16{
-		pm.liveLogBase + offset,     // LiveLog PUT (base port)
-		pm.liveLogBase + offset + 1, // LiveLog GET (base + 1)
-		pm.interactiveBase + offset, // Interactive
-		pm.proxyBase + offset,       // TaskclusterProxy
+	ports := make([]uint16, gwconfig.PortsPerTask)
+	if pm.enableLiveLog {
+		ports[PortIndexLiveLogPUT] = pm.liveLogBase + offset
+		ports[PortIndexLiveLogGET] = pm.liveLogBase + offset + 1
+	}
+	if pm.enableInteractive {
+		ports[PortIndexInteractive] = pm.interactiveBase + offset
+	}
+	if pm.enableProxy {
+		ports[PortIndexTaskclusterProxy] = pm.proxyBase + offset
 	}
 
 	pm.allocated[taskID] = ports
@@ -86,11 +100,19 @@ func (pm *PortManager) ReleasePorts(taskID string) {
 	delete(pm.slots, taskID)
 }
 
-// GetPorts returns the ports allocated to a task, or nil if not allocated.
+// GetPorts returns a copy of the ports allocated to a task, or nil if
+// not allocated. A copy is returned so callers can't mutate the
+// internal slice.
 func (pm *PortManager) GetPorts(taskID string) []uint16 {
 	pm.Lock()
 	defer pm.Unlock()
-	return pm.allocated[taskID]
+	ports, ok := pm.allocated[taskID]
+	if !ok {
+		return nil
+	}
+	result := make([]uint16, len(ports))
+	copy(result, ports)
+	return result
 }
 
 // LiveLogPorts returns the LiveLog PUT and GET ports for a task.

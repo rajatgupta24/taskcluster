@@ -76,6 +76,6 @@ func (mtf *MetadataTaskFeature) Stop(err *ExecutionErrors) {
 	// if we can't write this, something seriously wrong, so cause worker to
 	// report an internal-error to sentry and crash!
 	if e != nil {
-		panic(err)
+		panic(e)
 	}
 }

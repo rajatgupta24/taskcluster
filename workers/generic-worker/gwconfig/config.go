@@ -161,17 +161,19 @@ func (c *Config) Validate() error {
 // Interactive, TaskclusterProxy.
 const PortsPerTask = 4
 
-// ValidatePortConfiguration checks that port ranges don't overlap when capacity > 1.
-// Each concurrent task slot uses an offset of PortsPerTask (4) ports from the base.
-// This validation ensures the configured base ports are spaced far enough apart
-// to avoid collisions.
+// ValidatePortConfiguration checks that port ranges don't overlap.
+// Each concurrent task slot uses an offset of PortsPerTask (4) ports from the
+// base; the validation ensures base ports are spaced far enough apart to
+// avoid collisions across slots.
+//
+// Even at capacity=1 we validate the four feature ports against each other
+// (e.g. livelogPortBase == taskclusterProxyPort would collide at bind time);
+// only the inter-slot spacing checks are skipped when capacity=1, because
+// there is only a single slot.
 func (c *Config) ValidatePortConfiguration() error {
-	if c.Capacity == 1 {
-		return nil
-	}
-
-	// Calculate port ranges for the maximum capacity
-	// Each slot uses offset = slot * PortsPerTask from the base.
+	// At capacity=1 only the base port itself is allocated per feature,
+	// so each "range" is the bare port. With higher capacity, each
+	// range spans PortsPerTask * (capacity-1) extra ports.
 	// Use uint32 to avoid uint16 overflow when base ports are near 65535.
 	maxOffset := uint32(c.Capacity-1) * uint32(PortsPerTask)
 

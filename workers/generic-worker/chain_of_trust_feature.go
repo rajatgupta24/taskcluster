@@ -214,7 +214,7 @@ func (feature *ChainOfTrustTaskFeature) Stop(err *ExecutionErrors) {
 
 	// create detached ed25519 chain-of-trust.json.sig
 	sig := ed25519.Sign(feature.ed25519PrivKey, certBytes)
-	e = os.WriteFile(ed25519SignedCert, sig, 0644)
+	e = os.WriteFile(ed25519SignedCert, sig, 0600)
 	if e != nil {
 		panic(e)
 	}

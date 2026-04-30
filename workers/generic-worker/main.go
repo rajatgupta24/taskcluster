@@ -480,7 +480,7 @@ func RunWorker() (exitCode ExitCode) {
 	log.Printf("Worker capacity: %d", config.Capacity)
 
 	// Create PortManager for dynamic port allocation
-	portManager := NewPortManager(config.LiveLogPortBase, config.InteractivePort, config.TaskclusterProxyPort, config.Capacity)
+	portManager := NewPortManager(&config.PublicConfig)
 
 	// Channel for task completion notifications
 	taskCompleteChan := make(chan taskCompletionResult, config.Capacity)
@@ -496,6 +496,70 @@ func RunWorker() (exitCode ExitCode) {
 		log.Printf("WARNING: failed to remove old task directories/users: %v", err)
 	}
 
+	// processCompletion records bookkeeping for a finished task and
+	// reports back what the main loop should do next. Extracted from
+	// inline drain logic so both the top-of-loop drain and the
+	// wait-window completion path can share a single implementation
+	// (avoiding the prior re-put-on-channel pattern, which relied on
+	// a brittle buffer-size / sender-count invariant).
+	type completionAction int
+	const (
+		completionContinue completionAction = iota
+		completionWorkerShutdown
+		completionWorkerManagerShutdown
+		completionTasksComplete
+		completionRebootRequired
+	)
+	processCompletion := func(result taskCompletionResult) completionAction {
+		tasksResolved++
+		lastActive = time.Now()
+
+		if result.workerShutdown {
+			log.Printf("Task %s requested worker shutdown, aborting other tasks...", result.taskID)
+			graceful.Terminate(false) // Abort other tasks immediately
+			taskManager.WaitForAll()
+			return completionWorkerShutdown
+		}
+
+		// remainingTasks will be -ve, if config.NumberOfTasksToRun is not set (=0)
+		remainingTasks := int(config.NumberOfTasksToRun - tasksResolved)
+		remainingTaskCountText := ""
+		if remainingTasks > 0 {
+			remainingTaskCountText = fmt.Sprintf(" (will exit after resolving %v more)", remainingTasks)
+		}
+		log.Printf("Resolved %v tasks in total so far%v.", tasksResolved, remainingTaskCountText)
+		if remainingTasks == 0 {
+			log.Printf("Completed all task(s) (number of tasks to run = %v)", config.NumberOfTasksToRun)
+			taskManager.WaitForAll()
+			if checkWhetherToTerminate() {
+				return completionWorkerManagerShutdown
+			}
+			return completionTasksComplete
+		}
+		// In non-headless multiuser mode with capacity=1, reboot between tasks
+		if rebootBetweenTasks() {
+			return completionRebootRequired
+		}
+		return completionContinue
+	}
+
+	// processCompletionAction translates an action into the matching
+	// worker exit code. Returns ok=false when the action means "keep
+	// running" so the caller can fall through.
+	processCompletionAction := func(action completionAction) (ExitCode, bool) {
+		switch action {
+		case completionWorkerShutdown:
+			return WORKER_SHUTDOWN, true
+		case completionWorkerManagerShutdown:
+			return WORKER_MANAGER_SHUTDOWN, true
+		case completionTasksComplete:
+			return TASKS_COMPLETE, true
+		case completionRebootRequired:
+			return REBOOT_REQUIRED, true
+		}
+		return 0, false
+	}
+
 mainLoop:
 	for {
 		// Process any completed tasks
@@ -504,34 +568,8 @@ mainLoop:
 			select {
 			case result := <-taskCompleteChan:
 				processedCompletion = true
-				tasksResolved++
-				lastActive = time.Now()
-
-				if result.workerShutdown {
-					log.Printf("Task %s requested worker shutdown, aborting other tasks...", result.taskID)
-					graceful.Terminate(false) // Abort other tasks immediately
-					taskManager.WaitForAll()
-					return WORKER_SHUTDOWN
-				}
-
-				// remainingTasks will be -ve, if config.NumberOfTasksToRun is not set (=0)
-				remainingTasks := int(config.NumberOfTasksToRun - tasksResolved)
-				remainingTaskCountText := ""
-				if remainingTasks > 0 {
-					remainingTaskCountText = fmt.Sprintf(" (will exit after resolving %v more)", remainingTasks)
-				}
-				log.Printf("Resolved %v tasks in total so far%v.", tasksResolved, remainingTaskCountText)
-				if remainingTasks == 0 {
-					log.Printf("Completed all task(s) (number of tasks to run = %v)", config.NumberOfTasksToRun)
-					taskManager.WaitForAll()
-					if checkWhetherToTerminate() {
-						return WORKER_MANAGER_SHUTDOWN
-					}
-					return TASKS_COMPLETE
-				}
-				// In non-headless multiuser mode with capacity=1, reboot between tasks
-				if rebootBetweenTasks() {
-					return REBOOT_REQUIRED
+				if exit, done := processCompletionAction(processCompletion(result)); done {
+					return exit
 				}
 			default:
 				goto doneProcessingCompletions
@@ -607,17 +645,12 @@ mainLoop:
 					taskContext = ctx
 				}
 
-				// Create generic-worker subdirectory for logs, etc.
-				gwDir := filepath.Join(ctx.TaskDir, "generic-worker")
-				err = os.MkdirAll(gwDir, 0700)
-				if err != nil {
-					panic(err)
-				}
-				log.Printf("Created dir: %v", gwDir)
-
-				// cleanupTaskSetup removes the task directory and releases
-				// platform resources on early error paths before the task
-				// goroutine is launched.
+				// cleanupTaskSetup removes the task directory, releases
+				// platform resources, and (in headless multiuser) deletes
+				// the per-task OS user on early error paths before the
+				// task goroutine is launched. Defined before the gwDir
+				// MkdirAll so a failure there doesn't leak the user
+				// account or task directory.
 				cleanupTaskSetup := func(pd *process.PlatformData) {
 					if pd != nil {
 						if releaseErr := pd.ReleaseResources(); releaseErr != nil {
@@ -627,7 +660,20 @@ mainLoop:
 					if removeErr := os.RemoveAll(ctx.TaskDir); removeErr != nil {
 						log.Printf("ERROR removing task directory %s: %v", ctx.TaskDir, removeErr)
 					}
+					deleteTaskUserOnCleanup(ctx)
 				}
+
+				// Create generic-worker subdirectory for logs, etc.
+				gwDir := filepath.Join(ctx.TaskDir, "generic-worker")
+				err = os.MkdirAll(gwDir, 0700)
+				if err != nil {
+					log.Printf("ERROR creating generic-worker dir for task %s: %v", task.TaskID, err)
+					_ = task.StatusManager.ReportException(internalError)
+					cleanupTaskSetup(nil)
+					taskCompleteChan <- taskCompletionResult{taskID: task.TaskID}
+					continue
+				}
+				log.Printf("Created dir: %v", gwDir)
 
 				// Get platform data for this task's context
 				pd, err := platformDataForTaskContext(ctx)
@@ -743,13 +789,15 @@ mainLoop:
 		select {
 		case <-wait5Seconds.C:
 		case result := <-taskCompleteChan:
-			// A task completed during the wait. Put the result back so
-			// the drain loop at the top of mainLoop processes it along
-			// with any other completions that arrived. This is safe
-			// because the channel buffer is config.Capacity and at most
-			// config.Capacity goroutines can send to it; we just removed
-			// one item, so there is always room to put it back.
-			taskCompleteChan <- result
+			// Process the completion in-place, then loop back to the
+			// top to drain any siblings and run the post-completion
+			// purge. This used to re-put the result on the channel
+			// and rely on the top-of-loop drain to pick it up — that
+			// pattern was sensitive to the chan buffer size and
+			// goroutine count invariants.
+			if exit, done := processCompletionAction(processCompletion(result)); done {
+				return exit
+			}
 			continue mainLoop
 		case <-sigInterrupt:
 			log.Printf("Interrupt received, signaling %d running tasks...", taskManager.TaskCount())

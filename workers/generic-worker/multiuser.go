@@ -241,6 +241,31 @@ func platformDataForTaskContext(ctx *TaskContext) (*process.PlatformData, error)
 	return process.TaskUserPlatformData(ctx.User, config.HeadlessTasks)
 }
 
+// deleteTaskUserOnCleanup removes the OS user associated with the given
+// TaskContext when the task setup fails before the task goroutine
+// launches. Headless multiuser provisions a fresh user per task in
+// CreateTaskContext; without this, a setup failure (platform data /
+// binary validation / port allocation / mkdir) leaves the account
+// behind until the next purgeOldTasks sweep.
+//
+// Non-headless mode reuses a single shared user across tasks (set up
+// in prepareTaskEnvironment), so we must NOT delete it on per-task
+// cleanup.
+//
+// Under runningTests, CreateTaskContext loads the user from
+// next-task-user.json — the *test framework* owns that user's
+// lifecycle and reuses it across the suite. Deleting it here would
+// break subsequent tests and leave dangling SIDs in ACLs the shared
+// user appears in.
+func deleteTaskUserOnCleanup(ctx *TaskContext) {
+	if runningTests || !config.HeadlessTasks || ctx == nil || ctx.User == nil || ctx.User.Name == "" {
+		return
+	}
+	if err := gwruntime.DeleteUser(ctx.User.Name); err != nil {
+		log.Printf("ERROR deleting task user %s during cleanup: %v", ctx.User.Name, err)
+	}
+}
+
 // purgeOldTasks cleans up old task directories and users.
 // skipDirs contains all task directory names to preserve (running tasks, etc.)
 func purgeOldTasks(skipDirs ...string) error {

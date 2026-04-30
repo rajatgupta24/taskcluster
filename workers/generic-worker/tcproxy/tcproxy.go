@@ -25,10 +25,21 @@ type TaskclusterProxy struct {
 }
 
 // New starts a tcproxy OS process using the executable specified, and returns
-// a *TaskclusterProxy. If allowedUser is non-empty, it is passed to the proxy
-// process via the --allowed-user flag, enabling per-connection OS user
-// verification.
-func New(taskclusterProxyExecutable string, ipAddress string, httpPort uint16, rootURL string, creds *tcclient.Credentials, allowedUser string) (*TaskclusterProxy, error) {
+// a *TaskclusterProxy.
+//
+// If allowedUser is non-empty, it is passed via --allowed-user to enable
+// per-connection OS user verification.
+//
+// If allowedNetwork is non-empty (CIDR form, e.g. "172.18.0.0/16"), it is
+// passed via --allowed-network. Connections whose remote IP falls in this
+// CIDR are admitted when the OS-level peer-credential lookup is not
+// possible (e.g. a container connecting via a Docker bridge gateway —
+// the peer socket lives in the container's network namespace and is not
+// visible in the proxy's /proc/net/tcp). Connections whose UID is found
+// but does not match are still rejected, so a sibling task's host
+// process is not admitted just because its source IP happens to be inside
+// the CIDR.
+func New(taskclusterProxyExecutable string, ipAddress string, httpPort uint16, rootURL string, creds *tcclient.Credentials, allowedUser string, allowedNetwork string) (*TaskclusterProxy, error) {
 	args := []string{
 		"--port", strconv.Itoa(int(httpPort)),
 		"--root-url", rootURL,
@@ -41,6 +52,9 @@ func New(taskclusterProxyExecutable string, ipAddress string, httpPort uint16, r
 	}
 	if allowedUser != "" {
 		args = append(args, "--allowed-user", allowedUser)
+	}
+	if allowedNetwork != "" {
+		args = append(args, "--allowed-network", allowedNetwork)
 	}
 	args = append(args, creds.AuthorizedScopes...)
 	l := &TaskclusterProxy{
@@ -57,8 +71,16 @@ func New(taskclusterProxyExecutable string, ipAddress string, httpPort uint16, r
 	}
 	l.Pid = l.command.Process.Pid
 	log.Printf("Started taskcluster proxy process (PID %v)", l.Pid)
-	// Just to be safe, let's make sure the port is actually active before returning.
-	if err = waitForPortToBeActive(ipAddress, httpPort); err != nil {
+	// Wait on the address the launcher itself can reach. When
+	// allowedNetwork is set the proxy also binds 127.0.0.1, and
+	// dialing that loopback path is more reliable from the host netns
+	// than dialing a docker-bridge gateway IP through whatever NAT
+	// rules the host is running.
+	readinessAddr := ipAddress
+	if allowedNetwork != "" {
+		readinessAddr = "127.0.0.1"
+	}
+	if err = waitForPortToBeActive(readinessAddr, httpPort); err != nil {
 		killErr := l.command.Process.Kill()
 		if killErr != nil {
 			log.Printf("Failed to kill taskcluster-proxy process (PID %v) after readiness timeout: %v", l.Pid, killErr)

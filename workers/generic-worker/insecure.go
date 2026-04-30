@@ -105,6 +105,12 @@ func platformDataForTaskContext(ctx *TaskContext) (*process.PlatformData, error)
 	return process.TaskUserPlatformData(ctx.User, false)
 }
 
+// deleteTaskUserOnCleanup is a no-op on the insecure engine: tasks
+// share the worker process's user, so there is nothing per-task to
+// remove. The multiuser engine's implementation deletes the headless
+// per-task user.
+func deleteTaskUserOnCleanup(_ *TaskContext) {}
+
 func deleteDir(path string) error {
 	log.Print("Removing directory '" + path + "'...")
 	err := host.Run("/bin/chmod", "-R", "u+w", path)

@@ -9,7 +9,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"os/user"
 	"path/filepath"
 	"sort"
 	"sync"
@@ -124,19 +123,13 @@ func ReleaseCache(entry *Cache) {
 func newPoolEntry(cacheName string) (*Cache, error) {
 	basename := slugid.Nice()
 	file := filepath.Join(config.CachesDir, basename)
-	currentUser, err := user.Current()
-	if err != nil {
-		return nil, fmt.Errorf("[mounts] not able to look up UID for current user: %w", err)
-	}
 	return &Cache{
-		Hits:          1,
-		Created:       time.Now(),
-		Location:      file,
-		Owner:         directoryCaches,
-		Key:           cacheName,
-		OwnerUsername: currentUser.Username,
-		OwnerUID:      currentUser.Uid,
-		InUse:         true,
+		Hits:     1,
+		Created:  time.Now(),
+		Location: file,
+		Owner:    directoryCaches,
+		Key:      cacheName,
+		InUse:    true,
 	}, nil
 }
 
@@ -223,21 +216,12 @@ type Cache struct {
 	Key string `json:"key"`
 	// SHA256 of content, if a file (not used for directories)
 	SHA256 string `json:"sha256"`
-	// Keeps a record of which task user mounts this cache. This is so that
-	// when the cache is mounted as a new task user, file ownership can be
-	// recursively changed from the previous task user to the new task user.
-	//
-	// Note, although uid is typically a uint32, we store as a string since
-	// that is how the standard library passes it to us, and we pass it to
-	// task commands as a string, so this avoids converting from string to
-	// uint32 and then back again. We use a uid rather than username, since
-	// task users get deleted, so the system may no longer recognise the
-	// previous task user username, but uids should remain intact.
-	//
-	// Since: generic-worker 75.0.0
-	OwnerUsername string `json:"ownerUsername"`
-	OwnerUID      string `json:"mounterUID"`
 	// InUse indicates whether a task currently owns this pool entry.
+	// Persisted with json:"in_use" (rather than json:"-") because
+	// loadFromJSONFile uses DisallowUnknownFields — older state files
+	// written by prior workers contain "in_use" and would otherwise
+	// fail the new-format unmarshal. LoadFromFile resets to false
+	// on startup since no task can be running across a worker restart.
 	InUse bool `json:"in_use"`
 	// LastUsed records when this entry was last returned to the pool.
 	LastUsed time.Time `json:"last_used"`
@@ -744,11 +728,30 @@ func (f *FileMount) FSContent() (FSContent, error) {
 	return FSContentFrom(f.Content)
 }
 
-func (w *WritableDirectoryCache) Mount(taskMount *TaskMount) error {
+func (w *WritableDirectoryCache) Mount(taskMount *TaskMount) (err error) {
 	target := fileutil.AbsFrom(taskMount.task.TaskDir(), w.Directory)
 
 	cacheMutex.Lock()
 	entry := AcquireCache(w.CacheName)
+
+	// If Mount panics after the pool entry is registered (e.g. a SHA
+	// panic in a content extract), the entry would otherwise stay
+	// InUse=true forever and trimPoolExcess can't reclaim it — burning
+	// one slot from this cache's pool until worker restart. Recover
+	// here only to release the entry; we re-panic so the worker's
+	// existing crash handling still triggers an internal-error.
+	released := false
+	defer func() {
+		if r := recover(); r != nil {
+			if entry != nil && !released {
+				cacheMutex.Lock()
+				_ = entry.Evict(taskMount)
+				cacheMutex.Unlock()
+				delete(taskMount.poolEntries, w)
+			}
+			panic(r)
+		}
+	}()
 
 	if entry != nil {
 		cacheLocation := entry.Location
@@ -756,22 +759,24 @@ func (w *WritableDirectoryCache) Mount(taskMount *TaskMount) error {
 
 		parentDir := filepath.Dir(target)
 		taskMount.Infof("Moving existing writable directory cache %v from %v to %v", w.CacheName, cacheLocation, target)
-		if err := MkdirAll(taskMount, parentDir); err != nil {
+		if mkErr := MkdirAll(taskMount, parentDir); mkErr != nil {
 			// MkdirAll failed — release the acquired entry back to the pool
 			cacheMutex.Lock()
 			ReleaseCache(entry)
 			cacheMutex.Unlock()
-			return fmt.Errorf("not able to create directory %v: %v", parentDir, err)
+			released = true
+			return fmt.Errorf("not able to create directory %v: %v", parentDir, mkErr)
 		}
-		if err := RenameCrossDevice(cacheLocation, target); err != nil {
+		if mvErr := RenameCrossDevice(cacheLocation, target); mvErr != nil {
 			// Rename failed — evict the broken entry from the pool
 			cacheMutex.Lock()
 			evictErr := entry.Evict(taskMount)
 			cacheMutex.Unlock()
+			released = true
 			if evictErr != nil {
 				panic(evictErr)
 			}
-			return fmt.Errorf("not able to move directory %v to %v: %v", cacheLocation, target, err)
+			return fmt.Errorf("not able to move directory %v to %v: %v", cacheLocation, target, mvErr)
 		}
 		taskMount.poolEntries[w] = entry
 	} else {
@@ -787,25 +792,28 @@ func (w *WritableDirectoryCache) Mount(taskMount *TaskMount) error {
 		cacheMutex.Unlock()
 
 		if w.Content != nil {
-			c, err := FSContentFrom(w.Content)
-			if err != nil {
+			c, fsErr := FSContentFrom(w.Content)
+			if fsErr != nil {
 				cacheMutex.Lock()
 				_ = entry.Evict(taskMount)
 				cacheMutex.Unlock()
-				return fmt.Errorf("not able to retrieve FSContent: %v", err)
+				released = true
+				return fmt.Errorf("not able to retrieve FSContent: %v", fsErr)
 			}
-			if err = extract(c, w.Format, target, taskMount); err != nil {
+			if extractErr := extract(c, w.Format, target, taskMount); extractErr != nil {
 				cacheMutex.Lock()
 				_ = entry.Evict(taskMount)
 				cacheMutex.Unlock()
-				return err
+				released = true
+				return extractErr
 			}
 		} else {
-			if err := MkdirAll(taskMount, target); err != nil {
+			if mkErr := MkdirAll(taskMount, target); mkErr != nil {
 				cacheMutex.Lock()
 				_ = entry.Evict(taskMount)
 				cacheMutex.Unlock()
-				return fmt.Errorf("not able to create directory %v: %v", target, err)
+				released = true
+				return fmt.Errorf("not able to create directory %v: %v", target, mkErr)
 			}
 		}
 		taskMount.poolEntries[w] = entry
@@ -816,13 +824,13 @@ func (w *WritableDirectoryCache) Mount(taskMount *TaskMount) error {
 	// or at an absolute path outside it. Either way, the file system
 	// resources should be owned by the task user, even if commands
 	// execute as LocalSystem.
-	err := makeDirReadWritableForTaskUser(taskMount, target)
-	if err != nil {
+	if chownErr := makeDirReadWritableForTaskUser(taskMount, target); chownErr != nil {
 		cacheMutex.Lock()
 		_ = entry.Evict(taskMount)
 		cacheMutex.Unlock()
 		delete(taskMount.poolEntries, w)
-		return err
+		released = true
+		return chownErr
 	}
 	taskMount.Infof("Successfully mounted writable directory cache '%v'", target)
 	return nil
@@ -940,8 +948,18 @@ func ensureCached(fsContent FSContent, taskMount *TaskMount) (file string, sha25
 		cacheMutex.Unlock()
 
 		// validate SHA256 in case of either tampering or new content at url...
+		// CalculateSHA256 happens without cacheMutex held to keep
+		// concurrent SHA reads parallelisable, but that opens a race
+		// where another task can evict this entry mid-read (a SHA
+		// mismatch path further down does exactly that). If the file
+		// vanishes under us, retry ensureCached so we re-download
+		// rather than blaming a worker bug.
 		sha256, err = fileutil.CalculateSHA256(file)
 		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				taskMount.Infof("Cache entry for %v vanished mid-read (likely concurrent eviction); retrying download", cacheKey)
+				return ensureCached(fsContent, taskMount)
+			}
 			panic(fmt.Sprintf("Internal worker bug! Cannot calculate SHA256 of file %v that I have in my cache: %v", file, err))
 		}
 		if requiredSHA256 == "" {
@@ -1451,7 +1469,10 @@ func (taskMount *TaskMount) purgeCaches() error {
 		// Evict available entries that are older than the purge request.
 		// In-use entries that match are marked for deferred eviction
 		// so they don't return to the pool with stale content.
-		remaining := entries[:0]
+		// Allocate a fresh slice rather than aliasing entries[:0] so a
+		// mid-loop RemoveAll error doesn't leave directoryCaches pointing
+		// at a partially-overwritten backing array.
+		remaining := make([]*Cache, 0, len(entries))
 		for _, cache := range entries {
 			if cache.Created.Add(-5 * time.Minute).Before(time.Time(request.Before)) {
 				if cache.InUse {

@@ -36,11 +36,23 @@ func TestValidatePortConfiguration(t *testing.T) {
 		}
 	}
 
-	t.Run("capacity=1 skips validation", func(t *testing.T) {
+	t.Run("capacity=1 still rejects colliding base ports", func(t *testing.T) {
 		c := baseConfig()
 		c.Capacity = 1
-		// Even with overlapping ports, capacity=1 should skip validation
+		// LiveLogPortBase and TaskclusterProxyPort both 8080 collide at
+		// bind time even at capacity=1, so this must fail validation.
 		c.LiveLogPortBase = 8080
+		c.TaskclusterProxyPort = 8080
+		err := c.ValidatePortConfiguration()
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "port range overlap detected")
+	})
+
+	t.Run("capacity=1 with non-overlapping base ports passes", func(t *testing.T) {
+		c := baseConfig()
+		c.Capacity = 1
+		c.LiveLogPortBase = 60000
+		c.InteractivePort = 53000
 		c.TaskclusterProxyPort = 8080
 		err := c.ValidatePortConfiguration()
 		require.NoError(t, err)

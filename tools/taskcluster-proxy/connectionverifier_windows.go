@@ -49,12 +49,16 @@ func (v *windowsVerifier) Verify(conn net.Conn) error {
 		return fmt.Errorf("failed to get SID for PID %d: %w", pid, err)
 	}
 
-	// Always allow SYSTEM (S-1-5-18) and Administrators (S-1-5-32-544) -
-	// the worker process runs as SYSTEM/admin and needs to reach tc-proxy
-	// for credential refresh and health checks.
+	// Always allow SYSTEM (S-1-5-18) - the worker process runs as
+	// SYSTEM and needs to reach tc-proxy for credential refresh and
+	// health checks. The previous implementation also compared against
+	// the Administrators *group* SID (S-1-5-32-544); that check was
+	// dead code because tokenUser.User.Sid is always a *user* SID.
+	// If we ever need to admit any process running with admin
+	// privileges, the correct test is to enumerate token groups via
+	// GetTokenGroups, not to compare the user SID.
 	systemSID, _ := windows.StringToSid("S-1-5-18")
-	adminSID, _ := windows.StringToSid("S-1-5-32-544")
-	if (systemSID != nil && sid.Equals(systemSID)) || (adminSID != nil && sid.Equals(adminSID)) {
+	if systemSID != nil && sid.Equals(systemSID) {
 		return nil
 	}
 
@@ -85,6 +89,11 @@ var (
 const (
 	tcpTableOwnerPidConnections = 4
 	afInet                      = 2
+	// MIB_TCP_STATE_ESTAB - matches only fully-established connections.
+	// Without this filter, stale TIME_WAIT entries from prior
+	// connections that reused the same source port could match before
+	// the live ESTABLISHED row and return the wrong owning PID.
+	mibTcpStateEstab = 5
 )
 
 // lookupPIDFromTcpTable finds the PID owning the local TCP endpoint at addr.
@@ -121,11 +130,11 @@ func lookupPIDFromTcpTable(addr *net.TCPAddr) (uint32, error) {
 	targetPort := uint32(addr.Port)<<8&0xff00 | uint32(addr.Port)>>8&0x00ff
 
 	for _, row := range rows {
-		if row.LocalAddr == targetIP && row.LocalPort == targetPort {
+		if row.State == mibTcpStateEstab && row.LocalAddr == targetIP && row.LocalPort == targetPort {
 			return row.OwningPid, nil
 		}
 	}
-	return 0, fmt.Errorf("connection from %s not found in TCP table", addr)
+	return 0, fmt.Errorf("connection from %s not found in TCP table: %w", addr, errPeerNotFound)
 }
 
 func getProcessUserSID(pid uint32) (*windows.SID, error) {

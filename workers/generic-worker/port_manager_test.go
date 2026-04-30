@@ -7,8 +7,22 @@ import (
 	"github.com/taskcluster/taskcluster/v99/workers/generic-worker/gwconfig"
 )
 
+// testConfig builds a PublicConfig with all three port-using features
+// enabled, so AllocatePorts populates every slot.
+func testConfig(liveLog, interactive, proxy uint16, capacity uint8) *gwconfig.PublicConfig {
+	return &gwconfig.PublicConfig{
+		Capacity:               capacity,
+		EnableLiveLog:          true,
+		EnableInteractive:      true,
+		EnableTaskclusterProxy: true,
+		LiveLogPortBase:        liveLog,
+		InteractivePort:        interactive,
+		TaskclusterProxyPort:   proxy,
+	}
+}
+
 func TestPortManagerAllocatePorts(t *testing.T) {
-	pm := NewPortManager(60000, 53000, 8080, 3)
+	pm := NewPortManager(testConfig(60000, 53000, 8080, 3))
 
 	// Allocate ports for first task
 	ports1, err := pm.AllocatePorts("task1")
@@ -41,7 +55,7 @@ func TestPortManagerAllocatePorts(t *testing.T) {
 }
 
 func TestPortManagerReleasePorts(t *testing.T) {
-	pm := NewPortManager(60000, 53000, 8080, 2)
+	pm := NewPortManager(testConfig(60000, 53000, 8080, 2))
 
 	// Allocate all capacity
 	_, err := pm.AllocatePorts("task1")
@@ -64,7 +78,7 @@ func TestPortManagerReleasePorts(t *testing.T) {
 }
 
 func TestPortManagerGetPorts(t *testing.T) {
-	pm := NewPortManager(60000, 53000, 8080, 2)
+	pm := NewPortManager(testConfig(60000, 53000, 8080, 2))
 
 	// Not allocated yet
 	require.Nil(t, pm.GetPorts("task1"))
@@ -82,7 +96,7 @@ func TestPortManagerGetPorts(t *testing.T) {
 }
 
 func TestPortManagerLiveLogPorts(t *testing.T) {
-	pm := NewPortManager(60000, 53000, 8080, 2)
+	pm := NewPortManager(testConfig(60000, 53000, 8080, 2))
 
 	// Not allocated
 	_, _, ok := pm.LiveLogPorts("task1")
@@ -99,7 +113,7 @@ func TestPortManagerLiveLogPorts(t *testing.T) {
 }
 
 func TestPortManagerInteractivePort(t *testing.T) {
-	pm := NewPortManager(60000, 53000, 8080, 2)
+	pm := NewPortManager(testConfig(60000, 53000, 8080, 2))
 
 	// Not allocated
 	_, ok := pm.InteractivePort("task1")
@@ -115,7 +129,7 @@ func TestPortManagerInteractivePort(t *testing.T) {
 }
 
 func TestPortManagerTaskclusterProxyPort(t *testing.T) {
-	pm := NewPortManager(60000, 53000, 8080, 2)
+	pm := NewPortManager(testConfig(60000, 53000, 8080, 2))
 
 	// Not allocated
 	_, ok := pm.TaskclusterProxyPort("task1")
@@ -131,7 +145,7 @@ func TestPortManagerTaskclusterProxyPort(t *testing.T) {
 }
 
 func TestPortManagerIdempotentAllocation(t *testing.T) {
-	pm := NewPortManager(60000, 53000, 8080, 2)
+	pm := NewPortManager(testConfig(60000, 53000, 8080, 2))
 
 	// First allocation
 	ports1, err := pm.AllocatePorts("task1")
@@ -144,7 +158,7 @@ func TestPortManagerIdempotentAllocation(t *testing.T) {
 }
 
 func TestPortManagerSlotReuse(t *testing.T) {
-	pm := NewPortManager(60000, 53000, 8080, 3)
+	pm := NewPortManager(testConfig(60000, 53000, 8080, 3))
 
 	// Allocate slots 0, 1, 2
 	_, _ = pm.AllocatePorts("task1") // slot 0
@@ -159,4 +173,37 @@ func TestPortManagerSlotReuse(t *testing.T) {
 	require.NoError(t, err)
 	// Slot 1 means offset of 4 (PortsPerTask)
 	require.Equal(t, uint16(60004), ports[PortIndexLiveLogPUT])
+}
+
+func TestPortManagerDisabledFeaturesGetZero(t *testing.T) {
+	c := &gwconfig.PublicConfig{
+		Capacity:             2,
+		EnableLiveLog:        false,
+		EnableInteractive:    true,
+		LiveLogPortBase:      0,
+		InteractivePort:      53000,
+		TaskclusterProxyPort: 8080,
+		// EnableTaskclusterProxy intentionally unset
+	}
+	pm := NewPortManager(c)
+	ports, err := pm.AllocatePorts("task1")
+	require.NoError(t, err)
+	require.Len(t, ports, gwconfig.PortsPerTask)
+	require.Equal(t, uint16(0), ports[PortIndexLiveLogPUT])
+	require.Equal(t, uint16(0), ports[PortIndexLiveLogGET])
+	require.Equal(t, uint16(53000), ports[PortIndexInteractive])
+	require.Equal(t, uint16(0), ports[PortIndexTaskclusterProxy])
+}
+
+func TestPortManagerGetPortsReturnsCopy(t *testing.T) {
+	pm := NewPortManager(testConfig(60000, 53000, 8080, 2))
+	_, err := pm.AllocatePorts("task1")
+	require.NoError(t, err)
+
+	got := pm.GetPorts("task1")
+	got[0] = 99 // mutate the returned slice
+
+	// Subsequent reads must not see the mutation
+	again := pm.GetPorts("task1")
+	require.Equal(t, uint16(60000), again[PortIndexLiveLogPUT])
 }

@@ -4,6 +4,7 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -66,13 +67,41 @@ func (v *linuxVerifier) Verify(conn net.Conn) error {
 // namespace. Connections from a separate namespace (e.g. a container
 // with its own netns) will not appear in /proc/net/tcp and
 // verification will fail (fail-closed).
+//
+// IPv4 clients on a dual-stack listener (proxy bound to ::) appear in
+// /proc/net/tcp6 as ::ffff:<ipv4>, not in /proc/net/tcp. Go normalizes
+// IPv4-mapped-IPv6 addresses to plain IPv4 (To4() returns non-nil), so
+// we search both files when the IP is IPv4 to cover both cases. A
+// follow-up may switch to SO_PEERCRED to eliminate /proc parsing
+// entirely.
 func lookupUIDFromProcNet(addr *net.TCPAddr) (uint32, error) {
-	procFile := "/proc/net/tcp"
+	procFiles := []string{"/proc/net/tcp", "/proc/net/tcp6"}
 	if addr.IP.To4() == nil {
-		procFile = "/proc/net/tcp6"
+		procFiles = []string{"/proc/net/tcp6"}
 	}
 
-	localAddrHex := ipPortToHex(addr.IP, addr.Port)
+	for _, procFile := range procFiles {
+		uid, err := scanProcNet(procFile, addr)
+		if err == nil {
+			return uid, nil
+		}
+		if !errors.Is(err, errPeerNotFound) {
+			return 0, err
+		}
+	}
+	return 0, fmt.Errorf("connection from %s not found in /proc/net/tcp{,6}: %w", addr, errPeerNotFound)
+}
+
+func scanProcNet(procFile string, addr *net.TCPAddr) (uint32, error) {
+	// In /proc/net/tcp the address is a 4-byte word; in tcp6 it's
+	// 16 bytes. IPv4-mapped-IPv6 form (::ffff:a.b.c.d) is what shows
+	// up in tcp6 for an IPv4 client connecting to a dual-stack listener.
+	var localAddrHex string
+	if strings.HasSuffix(procFile, "tcp6") {
+		localAddrHex = ipPortToHex6(addr.IP, addr.Port)
+	} else {
+		localAddrHex = ipPortToHex(addr.IP, addr.Port)
+	}
 
 	f, err := os.Open(procFile)
 	if err != nil {
@@ -98,7 +127,7 @@ func lookupUIDFromProcNet(addr *net.TCPAddr) (uint32, error) {
 			return uint32(uid), nil
 		}
 	}
-	return 0, fmt.Errorf("connection from %s not found in %s", addr, procFile)
+	return 0, errPeerNotFound
 }
 
 // ipPortToHex converts an IP and port to the hex format used in /proc/net/tcp.
@@ -109,6 +138,13 @@ func ipPortToHex(ip net.IP, port int) string {
 		return fmt.Sprintf("%02X%02X%02X%02X:%04X",
 			ip4[3], ip4[2], ip4[1], ip4[0], port)
 	}
+	return ipPortToHex6(ip, port)
+}
+
+// ipPortToHex6 emits the /proc/net/tcp6 form for any IP, including
+// IPv4 addresses (which appear as ::ffff:a.b.c.d on a dual-stack
+// listener). Always 16 bytes, four little-endian 32-bit words.
+func ipPortToHex6(ip net.IP, port int) string {
 	ip16 := ip.To16()
 	var b strings.Builder
 	for i := 0; i < 16; i += 4 {
