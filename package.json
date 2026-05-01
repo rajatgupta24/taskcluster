@@ -31,7 +31,7 @@
     "@azure/ms-rest-azure-js": "^2.0.1",
     "@azure/ms-rest-js": "^2.6.6",
     "@googleapis/compute": "^35.0.0",
-    "@googleapis/iam": "^35.1.0",
+    "@googleapis/iam": "^36.0.0",
     "@googleapis/iamcredentials": "^10",
     "@graphql-tools/schema": "^10.0.33",
     "@octokit/auth-app": "^6.1.0",
