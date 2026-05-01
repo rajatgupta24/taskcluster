@@ -2076,12 +2076,12 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@googleapis/iam@npm:^35.1.0":
-  version: 35.1.0
-  resolution: "@googleapis/iam@npm:35.1.0"
+"@googleapis/iam@npm:^36.0.0":
+  version: 36.0.0
+  resolution: "@googleapis/iam@npm:36.0.0"
   dependencies:
     googleapis-common: "npm:^8.0.0"
-  checksum: 10c0/ad7444b8d0bdd4d83c5593324345725899b1f8e62adee47b64ea7fc249e63fae9da127f644ae2136bca11c4a09585275b5ab75d7db667a6c31fa2ac820424804
+  checksum: 10c0/398c41173160f1a08e2a8cffef31b05b79e5c06408a0371741f115caac1260efdaf91e4330af287154e0a148a066ee9d2a2e63f2e40974fdf9a255b5fab414c3
   languageName: node
   linkType: hard
 
@@ -14167,7 +14167,7 @@ __metadata:
     "@azure/ms-rest-azure-js": "npm:^2.0.1"
     "@azure/ms-rest-js": "npm:^2.6.6"
     "@googleapis/compute": "npm:^35.0.0"
-    "@googleapis/iam": "npm:^35.1.0"
+    "@googleapis/iam": "npm:^36.0.0"
     "@googleapis/iamcredentials": "npm:^10"
     "@graphql-tools/schema": "npm:^10.0.33"
     "@octokit/auth-app": "npm:^6.1.0"
