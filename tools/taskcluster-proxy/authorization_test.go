@@ -378,7 +378,7 @@ func TestAPICallPOST(t *testing.T) {
 		testWithPermCreds(t, test([]string{}, true), 200)
 	})
 	t.Run("Test with perm creds without Content-Type header", func(t *testing.T) {
-		testWithPermCreds(t, test([]string{}, false), 200)
+		testWithPermCreds(t, test([]string{}, false), 400)
 	})
 	t.Run("Test with perm creds with authorizedScopes", func(t *testing.T) {
 		testWithPermCreds(t, test([]string{"test:authenticate-post"}, true), 200)
