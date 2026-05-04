@@ -84,17 +84,26 @@ func (cm CacheMap) Remove(entry *Cache) {
 	}
 }
 
-// AcquireCache finds an available (not in-use) pool entry for the given cache
-// name, marks it InUse, and returns it. Returns nil if no entry is available.
+// AcquireCache finds an available (not in-use, not awaiting purge) pool
+// entry for the given cache name, marks it InUse, and returns it.
+// Returns nil if no entry is available.
+//
+// NeedsPurge entries are skipped because their on-disk content is in
+// the process of being deleted (or is partially deleted after a failed
+// purgeCaches RemoveAll). Handing one out would either run a task
+// against half-empty cache content or fail with a RenameCrossDevice
+// error when Mount tries to move it into place.
+//
 // Caller must hold cacheMutex.
 func AcquireCache(name string) *Cache {
 	entries := directoryCaches[name]
 	var best *Cache
 	for _, e := range entries {
-		if !e.InUse {
-			if best == nil || e.LastUsed.After(best.LastUsed) {
-				best = e
-			}
+		if e.InUse || e.NeedsPurge {
+			continue
+		}
+		if best == nil || e.LastUsed.After(best.LastUsed) {
+			best = e
 		}
 	}
 	if best != nil {
@@ -731,7 +740,22 @@ func (f *FileMount) FSContent() (FSContent, error) {
 func (w *WritableDirectoryCache) Mount(taskMount *TaskMount) (err error) {
 	target := fileutil.AbsFrom(taskMount.task.TaskDir(), w.Directory)
 
-	cacheMutex.Lock()
+	// Track cacheMutex through every site in this function so the
+	// recover handler below can tell whether we still hold the lock
+	// at panic time. Re-acquiring an already-held mutex from the same
+	// goroutine deadlocks; this is the safety net the reviewer
+	// flagged as fragile in the original recover-and-relock code.
+	mutexHeld := false
+	lock := func() {
+		cacheMutex.Lock()
+		mutexHeld = true
+	}
+	unlock := func() {
+		cacheMutex.Unlock()
+		mutexHeld = false
+	}
+
+	lock()
 	entry := AcquireCache(w.CacheName)
 
 	// If Mount panics after the pool entry is registered (e.g. a SHA
@@ -744,7 +768,17 @@ func (w *WritableDirectoryCache) Mount(taskMount *TaskMount) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			if entry != nil && !released {
-				cacheMutex.Lock()
+				// If we already hold the lock (panic happened
+				// inside one of the brief locked windows), skip
+				// the re-Lock. We still always Unlock at the end
+				// — that releases either the lock we just took
+				// or the one that was held when the panic fired.
+				// Asymmetric Lock/Unlock would leak the mutex
+				// and deadlock subsequent goroutines, which was
+				// the reviewer's concern with my prior fix.
+				if !mutexHeld {
+					cacheMutex.Lock()
+				}
 				_ = entry.Evict(taskMount)
 				cacheMutex.Unlock()
 				delete(taskMount.poolEntries, w)
@@ -755,23 +789,23 @@ func (w *WritableDirectoryCache) Mount(taskMount *TaskMount) (err error) {
 
 	if entry != nil {
 		cacheLocation := entry.Location
-		cacheMutex.Unlock()
+		unlock()
 
 		parentDir := filepath.Dir(target)
 		taskMount.Infof("Moving existing writable directory cache %v from %v to %v", w.CacheName, cacheLocation, target)
 		if mkErr := MkdirAll(taskMount, parentDir); mkErr != nil {
 			// MkdirAll failed — release the acquired entry back to the pool
-			cacheMutex.Lock()
+			lock()
 			ReleaseCache(entry)
-			cacheMutex.Unlock()
+			unlock()
 			released = true
 			return fmt.Errorf("not able to create directory %v: %v", parentDir, mkErr)
 		}
 		if mvErr := RenameCrossDevice(cacheLocation, target); mvErr != nil {
 			// Rename failed — evict the broken entry from the pool
-			cacheMutex.Lock()
+			lock()
 			evictErr := entry.Evict(taskMount)
-			cacheMutex.Unlock()
+			unlock()
 			released = true
 			if evictErr != nil {
 				panic(evictErr)
@@ -784,34 +818,34 @@ func (w *WritableDirectoryCache) Mount(taskMount *TaskMount) (err error) {
 		var poolErr error
 		entry, poolErr = newPoolEntry(w.CacheName)
 		if poolErr != nil {
-			cacheMutex.Unlock()
+			unlock()
 			return poolErr
 		}
 		taskMount.Infof("No existing writable directory cache '%v' - creating %v", w.CacheName, entry.Location)
 		directoryCaches[w.CacheName] = append(directoryCaches[w.CacheName], entry)
-		cacheMutex.Unlock()
+		unlock()
 
 		if w.Content != nil {
 			c, fsErr := FSContentFrom(w.Content)
 			if fsErr != nil {
-				cacheMutex.Lock()
+				lock()
 				_ = entry.Evict(taskMount)
-				cacheMutex.Unlock()
+				unlock()
 				released = true
 				return fmt.Errorf("not able to retrieve FSContent: %v", fsErr)
 			}
 			if extractErr := extract(c, w.Format, target, taskMount); extractErr != nil {
-				cacheMutex.Lock()
+				lock()
 				_ = entry.Evict(taskMount)
-				cacheMutex.Unlock()
+				unlock()
 				released = true
 				return extractErr
 			}
 		} else {
 			if mkErr := MkdirAll(taskMount, target); mkErr != nil {
-				cacheMutex.Lock()
+				lock()
 				_ = entry.Evict(taskMount)
-				cacheMutex.Unlock()
+				unlock()
 				released = true
 				return fmt.Errorf("not able to create directory %v: %v", target, mkErr)
 			}
@@ -825,9 +859,9 @@ func (w *WritableDirectoryCache) Mount(taskMount *TaskMount) (err error) {
 	// resources should be owned by the task user, even if commands
 	// execute as LocalSystem.
 	if chownErr := makeDirReadWritableForTaskUser(taskMount, target); chownErr != nil {
-		cacheMutex.Lock()
+		lock()
 		_ = entry.Evict(taskMount)
-		cacheMutex.Unlock()
+		unlock()
 		delete(taskMount.poolEntries, w)
 		released = true
 		return chownErr
@@ -1473,6 +1507,14 @@ func (taskMount *TaskMount) purgeCaches() error {
 		// mid-loop RemoveAll error doesn't leave directoryCaches pointing
 		// at a partially-overwritten backing array.
 		remaining := make([]*Cache, 0, len(entries))
+		// Collect RemoveAll failures and surface them at the end of
+		// the loop so the map writeback below still runs and entries
+		// whose disk content was successfully removed are dropped.
+		// Returning mid-loop would leave directoryCaches[name] still
+		// referencing the now-deleted entry, and the next task to
+		// AcquireCache for that name would be handed a *Cache whose
+		// Location points at a half-removed directory.
+		var removeErrs []error
 		for _, cache := range entries {
 			if cache.Created.Add(-5 * time.Minute).Before(time.Time(request.Before)) {
 				if cache.InUse {
@@ -1483,8 +1525,15 @@ func (taskMount *TaskMount) purgeCaches() error {
 				}
 				taskMount.Infof("Removing cache %v from cache table (purge request)", cache.Key)
 				taskMount.Infof("Deleting cache %v file(s) at %v", cache.Key, cache.Location)
-				if err := os.RemoveAll(cache.Location); err != nil {
-					return err
+				if rmErr := os.RemoveAll(cache.Location); rmErr != nil {
+					taskMount.Errorf("Could not delete cache %v at %v: %v (will retry on next purge)", cache.Key, cache.Location, rmErr)
+					removeErrs = append(removeErrs, rmErr)
+					// Keep the entry so the next purge sweep retries
+					// the deletion. AcquireCache skips NeedsPurge
+					// entries, so it won't be handed to a follow-up
+					// task in the meantime.
+					cache.NeedsPurge = true
+					remaining = append(remaining, cache)
 				}
 			} else {
 				remaining = append(remaining, cache)
@@ -1494,6 +1543,12 @@ func (taskMount *TaskMount) purgeCaches() error {
 			delete(directoryCaches, request.CacheName)
 		} else {
 			directoryCaches[request.CacheName] = remaining
+		}
+		if len(removeErrs) > 0 {
+			// Surface the first failure once per cache name. Joining
+			// preserves the rest in errors.Is/As traversal if a
+			// caller cares.
+			return errors.Join(removeErrs...)
 		}
 	}
 	return nil

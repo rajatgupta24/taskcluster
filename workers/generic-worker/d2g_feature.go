@@ -13,25 +13,31 @@ import (
 	"sync"
 
 	"golang.org/x/sync/errgroup"
+	"golang.org/x/sync/singleflight"
 
 	"github.com/taskcluster/taskcluster/v99/internal/scopes"
 	"github.com/taskcluster/taskcluster/v99/workers/generic-worker/fileutil"
 	"github.com/taskcluster/taskcluster/v99/workers/generic-worker/process"
 )
 
-// Lock ordering (to prevent deadlocks):
-//  1. d2gImageLoadMutex (outermost — serializes docker load/pull)
-//  2. d2gCacheMutex     (protects d2g-image-cache.json)
-//  3. cacheMutex        (innermost — protects file/directory cache maps,
-//     defined in mounts_feature.go; acquired by garbageCollection which
-//     calls removeD2GCacheFile → d2gCacheMutex)
+// Concurrency model (capacity > 1):
+//
+//   - d2gImageLoads is a singleflight.Group keyed by image cache key.
+//     Concurrent tasks that resolve to the *same* image key share a
+//     single docker load / docker pull invocation; tasks resolving to
+//     *different* keys run in parallel — that's what capacity > 1 is
+//     for. Mirrors the fileCacheDownloads pattern in mounts_feature.go.
+//
+//   - d2gCacheMutex protects the d2g-image-cache.json file. Held only
+//     across the read or write to that single shared file, never across
+//     a docker invocation, so it doesn't bottleneck unrelated loads.
+//
+// Lock ordering (when both are held): d2gCacheMutex outside cacheMutex
+// (cacheMutex is defined in mounts_feature.go and acquired by
+// garbageCollection → removeD2GCacheFile → d2gCacheMutex).
 var (
-	// d2gCacheMutex protects access to the d2g-image-cache.json file
-	// for concurrent task execution (capacity > 1)
 	d2gCacheMutex sync.Mutex
-	// d2gImageLoadMutex protects concurrent docker image loads
-	// for concurrent task execution (capacity > 1)
-	d2gImageLoadMutex sync.Mutex
+	d2gImageLoads singleflight.Group
 )
 
 type (
@@ -256,6 +262,11 @@ func (dtf *D2GTaskFeature) Start() *CommandExecutionError {
 		}
 
 		chainOfTrustAdditionalDataPath := filepath.Join(taskDir, "chain-of-trust-additional-data.json")
+		// 0644 (not 0600): the worker (root) writes this file, then
+		// the task user reads it via copy-to-temp-file when the
+		// chain-of-trust feature folds it into the signed cert. The
+		// task dir is already 0700 owned by the task user, so this
+		// file is not exposed beyond that boundary.
 		err = os.WriteFile(chainOfTrustAdditionalDataPath, []byte(chainOfTrustAdditionalData), 0644)
 		if err != nil {
 			return executionError(internalError, errored, fmt.Errorf("[d2g] could not write chain of trust additional data file: %v", err))
@@ -292,31 +303,50 @@ func (dtf *D2GTaskFeature) Start() *CommandExecutionError {
 	return nil
 }
 
-// loadImageLocked serializes docker image loads (both artifact-based
-// `docker load` and registry-based `docker pull`) so that concurrent
-// tasks sharing the same image key don't issue redundant work and
-// don't race on the on-disk cache JSON write.
+// loadImageLocked deduplicates concurrent docker image loads (both
+// artifact-based `docker load` and registry-based `docker pull`) per
+// image key. Tasks pulling the *same* key share one docker invocation;
+// tasks pulling *different* keys run in parallel.
+//
+// The first return is whether *this* call actually performed the load
+// (true) versus picked up a result populated by another task (false) —
+// kept for the existing "[d2g] Loaded ..." vs "[d2g] Using cached ..."
+// log distinction in Start.
+type imageLoadResult struct {
+	image  *Image
+	loaded bool
+}
+
 func (dtf *D2GTaskFeature) loadImageLocked(key string, loadImage func() (*Image, *CommandExecutionError)) (*Image, bool, *CommandExecutionError) {
-	d2gImageLoadMutex.Lock()
-	defer d2gImageLoadMutex.Unlock()
+	v, err, _ := d2gImageLoads.Do(key, func() (any, error) {
+		// Re-read the on-disk cache: another task may have completed
+		// the load while we were waiting on singleflight, OR an
+		// unrelated process (a previous worker run) may have left a
+		// fresh entry behind. Done inside Do so the doubled-check
+		// happens under the per-key serialization.
+		latestCache := ImageCache{}
+		d2gCacheMutex.Lock()
+		latestCache.loadFromFile("d2g-image-cache.json")
+		d2gCacheMutex.Unlock()
+		maps.Copy(dtf.imageCache, latestCache)
+		if image := latestCache[key]; image != nil {
+			return imageLoadResult{image: image, loaded: false}, nil
+		}
 
-	// Refresh cache from disk in case another task loaded this image
-	// while we were waiting to acquire the lock.
-	latestCache := ImageCache{}
-	d2gCacheMutex.Lock()
-	latestCache.loadFromFile("d2g-image-cache.json")
-	d2gCacheMutex.Unlock()
-	maps.Copy(dtf.imageCache, latestCache)
-	if image := latestCache[key]; image != nil {
-		return image, false, nil
+		image, loadErr := loadImage()
+		if loadErr != nil {
+			return nil, loadErr
+		}
+		dtf.imageCache[key] = image
+		return imageLoadResult{image: image, loaded: true}, nil
+	})
+	if err != nil {
+		// Only loadImage returns an error from inside Do, and it's
+		// always a *CommandExecutionError.
+		return nil, false, err.(*CommandExecutionError)
 	}
-
-	image, loadErr := loadImage()
-	if loadErr != nil {
-		return nil, false, loadErr
-	}
-	dtf.imageCache[key] = image
-	return image, true, nil
+	r := v.(imageLoadResult)
+	return r.image, r.loaded, nil
 }
 
 func (dtf *D2GTaskFeature) Stop(err *ExecutionErrors) {

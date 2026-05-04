@@ -87,12 +87,16 @@ var (
 )
 
 const (
+	// TCP_TABLE_OWNER_PID_CONNECTIONS - GetExtendedTcpTable class
+	// returning per-connection rows annotated with the owning PID.
+	// Not exposed by golang.org/x/sys/windows; defined here from the
+	// IP Helper API headers.
 	tcpTableOwnerPidConnections = 4
-	afInet                      = 2
 	// MIB_TCP_STATE_ESTAB - matches only fully-established connections.
 	// Without this filter, stale TIME_WAIT entries from prior
 	// connections that reused the same source port could match before
-	// the live ESTABLISHED row and return the wrong owning PID.
+	// the live ESTABLISHED row and return the wrong owning PID. Also
+	// not exposed by golang.org/x/sys/windows.
 	mibTcpStateEstab = 5
 )
 
@@ -107,16 +111,27 @@ func lookupPIDFromTcpTable(addr *net.TCPAddr) (uint32, error) {
 		return 0, fmt.Errorf("IPv6 not yet supported on Windows connection verification")
 	}
 
-	// First call to get buffer size
+	// First call to get buffer size. We MUST inspect the return value
+	// here: only ERROR_INSUFFICIENT_BUFFER guarantees the `size`
+	// out-parameter has been written. Other failures (low memory,
+	// ERROR_INVALID_PARAMETER, etc.) leave `size` at zero, in which
+	// case allocating make([]byte, 0) and dereferencing &buf[0] below
+	// would panic and kill the proxy. Fail closed instead.
 	var size uint32
-	procGetExtendedTcpTable.Call(0, uintptr(unsafe.Pointer(&size)), 0,
-		afInet, tcpTableOwnerPidConnections, 0)
+	probe, _, _ := procGetExtendedTcpTable.Call(0, uintptr(unsafe.Pointer(&size)), 0,
+		windows.AF_INET, tcpTableOwnerPidConnections, 0)
+	if syscall.Errno(probe) != windows.ERROR_INSUFFICIENT_BUFFER {
+		return 0, fmt.Errorf("GetExtendedTcpTable size probe failed with code %d", probe)
+	}
+	if size == 0 {
+		return 0, fmt.Errorf("GetExtendedTcpTable returned zero buffer size")
+	}
 
 	buf := make([]byte, size)
 	ret, _, _ := procGetExtendedTcpTable.Call(
 		uintptr(unsafe.Pointer(&buf[0])),
 		uintptr(unsafe.Pointer(&size)),
-		0, afInet, tcpTableOwnerPidConnections, 0,
+		0, windows.AF_INET, tcpTableOwnerPidConnections, 0,
 	)
 	if ret != 0 {
 		return 0, fmt.Errorf("GetExtendedTcpTable failed with code %d", ret)

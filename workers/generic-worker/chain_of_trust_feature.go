@@ -214,7 +214,12 @@ func (feature *ChainOfTrustTaskFeature) Stop(err *ExecutionErrors) {
 
 	// create detached ed25519 chain-of-trust.json.sig
 	sig := ed25519.Sign(feature.ed25519PrivKey, certBytes)
-	e = os.WriteFile(ed25519SignedCert, sig, 0600)
+	// 0644 (not 0600) so the artifact uploader, which copies via
+	// copy-to-temp-file as the task user, can read this file. The
+	// task dir is already 0700 owned by the task user, so the file
+	// is not exposed beyond that boundary. Same rationale as
+	// chain-of-trust-additional-data.json in d2g_feature.go.
+	e = os.WriteFile(ed25519SignedCert, sig, 0644)
 	if e != nil {
 		panic(e)
 	}
