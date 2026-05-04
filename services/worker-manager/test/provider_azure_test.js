@@ -353,6 +353,7 @@ helper.secrets.mockSuite(testing.suiteName(), [], function(mock, skipping) {
         ['58e8abb0361533fb80f79b1b6d29d3ff8d5f00f0', 'D-TRUST Root Class 3 CA 2 2009'],
         ['73a5e64a3bff8316ff0edccc618a906e4eae4d74', 'Microsoft RSA Root Certificate Authority 2017'],
         ['999a64c37ff47d9fab95f14769891460eec4c3c5', 'Microsoft ECC Root Certificate Authority 2017'],
+        ['21734d95a2473be25cbfd12a84c6fbc5bc8e2414', 'Microsoft TLS RSA Root G2'],
       ]);
       // node-forge is unable to load these (issue #3923)
       const forgeProblemRootCAs = new Map([
