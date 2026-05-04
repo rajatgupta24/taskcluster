@@ -752,7 +752,6 @@ __metadata:
     chai: "npm:^6.2.2"
     chai-as-promised: "npm:^8.0.2"
     crypto-js: "npm:^4.2.0"
-    dotenv: "npm:^16.5.0"
     eslint: "npm:^10.2.1"
     hawk: "npm:^9.0.2"
     karma: "npm:^6.4.4"
@@ -2383,13 +2382,6 @@ __metadata:
   version: 1.2.0
   resolution: "domain-browser@npm:1.2.0"
   checksum: 10c0/a955f482f4b4710fbd77c12a33e77548d63603c30c80f61a80519f27e3db1ba8530b914584cc9e9365d2038753d6b5bd1f4e6c81e432b007b0ec95b8b5e69b1b
-  languageName: node
-  linkType: hard
-
-"dotenv@npm:^16.5.0":
-  version: 16.5.0
-  resolution: "dotenv@npm:16.5.0"
-  checksum: 10c0/5bc94c919fbd955bf0ba44d33922a1e93d1078e64a1db5c30faeded1d996e7a83c55332cb8ea4fae5a9ca4d0be44cbceb95c5811e70f9f095298df09d1997dd9
   languageName: node
   linkType: hard
 
