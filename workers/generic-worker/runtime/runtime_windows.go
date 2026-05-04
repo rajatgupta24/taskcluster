@@ -122,7 +122,7 @@ func (osUser *OSUser) CreateUserProfile() error {
 	}
 
 	// Allocate buffer for profile path (MAX_PATH = 260)
-	profilePath := make([]uint16, 260)
+	profilePath := make([]uint16, syscall.MAX_PATH)
 
 	err = win32.CreateProfile(sidPtr, namePtr, &profilePath[0], uint32(len(profilePath)))
 	if err != nil {
