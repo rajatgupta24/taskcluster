@@ -33,6 +33,6 @@ describe('formatBytes', () => {
   });
 
   it('drops fractional digit when value is large', () => {
-    expect(formatBytes(150_000)).toBe('150 KB');
+    expect(formatBytes(150_543)).toBe('151 KB');
   });
 });
