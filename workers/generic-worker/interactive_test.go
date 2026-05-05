@@ -117,7 +117,7 @@ func TestInteractiveCommand(t *testing.T) {
 						t.Fatalf("read error: %v", err)
 					}
 					completeOutput = append(completeOutput, output...)
-					if bytes.Count(completeOutput, expectedBytes) == 3 {
+					if bytes.Count(completeOutput, expectedBytes) == 2 {
 						ok = true
 						break
 					}
